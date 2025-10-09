@@ -5,31 +5,52 @@ import pandas as pd
 from pathlib import Path
 import sys
 
+from pathlib import Path
+import pandas as pd
+import glob, os
+
 def load_data():
     """
     Charge toutes les données Excel depuis les sous-dossiers Data/.
     Retourne les DataFrames bruts nécessaires au traitement.
     """
-    BASE_DIR = Path(__file__).resolve().parent.parent
+
+    # === Détection dynamique du dossier Data (marche localement ET sur Render) ===
+    current_dir = Path(__file__).resolve().parent
+    while current_dir != current_dir.parent:
+        if (current_dir / "Data").exists():
+            BASE_DIR = current_dir
+            break
+        current_dir = current_dir.parent
+    else:
+        raise FileNotFoundError("Impossible de trouver le dossier Data depuis " + str(Path(__file__).resolve()))
+
     data_dir = BASE_DIR / "Data"
+    cache_dir = data_dir / "Cache"
 
-    dossier_mvt_stock = data_dir / "Mvt_Stock"
-    dossier_reception = data_dir / "Historique_Réception"
-    dossier_sorties = data_dir / "Historique_des_Sorties"
-    dossier_ecart_stock = data_dir / "Ecart_Stock"
+    print(f"Dossier DATA détecté : {data_dir}")
+    print(f"Dossier CACHE détecté : {cache_dir}")
 
+    # Vérifie si le cache existe
+    if not cache_dir.exists():
+        raise FileNotFoundError(f"Le dossier de cache n'existe pas : {cache_dir}")
+
+    # === Chargement des fichiers Excel ===
     def concat_excel_from_folder(folder):
         fichiers = glob.glob(str(folder / "*.xlsx"))
         if not fichiers:
             return pd.DataFrame()
         return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
 
-    # Chargement des données
+    dossier_mvt_stock = data_dir / "Mvt_Stock"
+    dossier_reception = data_dir / "Historique_Réception"
+    dossier_sorties = data_dir / "Historique_des_Sorties"
+    dossier_ecart_stock = data_dir / "Ecart_Stock"
+
     df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock)
     df_reception = concat_excel_from_folder(dossier_reception)
     df_sorties = concat_excel_from_folder(dossier_sorties)
 
-    # Récupération des deux derniers fichiers d’écart
     files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
     if len(files) < 2:
         raise FileNotFoundError("Pas assez de fichiers dans Ecart_Stock pour comparaison.")
@@ -38,21 +59,22 @@ def load_data():
     df_ecart_stock_prev = pd.read_excel(file_prev)
     df_ecart_stock_last = pd.read_excel(file_last)
 
-    # Articles et inventaire
+    # === Chargement des fichiers de référence ===
     file_article = data_dir / "Article_€.xlsx"
     file_inventaire = data_dir / "Inventory_21_09_2025.xlsx"
 
     df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
     df_inventaire = pd.read_excel(file_inventaire) if file_inventaire.exists() else pd.DataFrame()
-    
-    # Chemin du fichier parquet (toujours fixe dans le cache)
-    file_last_parquet = data_dir / "Cache" / "ecart_stock_last.parquet"
 
-    # Écrit ce chemin dans file_last.txt
-    file_last_txt = data_dir / "file_last.txt"
+    # === Gestion du cache Parquet ===
+    file_last_parquet = cache_dir / "ecart_stock_last.parquet"
+    file_last_txt = cache_dir / "file_last.txt"
+
     with open(file_last_txt, "w", encoding="utf-8") as f:
-        f.write(str(file_last_parquet).replace("\\", "/"))  # pour compatibilité Streamlit/Windows
+        f.write(str(file_last_parquet).replace("\\", "/"))
 
+    print(f"Chemin final du cache Parquet : {file_last_parquet}")
+    print(f"Fichier existe : {file_last_parquet.exists()}")
 
     return (
         df_mvt_stock,
@@ -64,6 +86,7 @@ def load_data():
         df_article_euros,
         file_last,
     )
+
 
 def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock):  
 
@@ -478,7 +501,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_article_euros = remove_duplicate_columns(df_article_euros)
 
         # ============================================================
-        # 🧩 Préserver les anciens commentaires avant d'écraser le parquet
+        # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
         BASE_DIR = Path(__file__).resolve().parent.parent
         data_dir = BASE_DIR / "Data" / "Cache"

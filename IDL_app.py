@@ -451,7 +451,16 @@ def Analyse_stock():
         df_mvt_stock['Emplacement'] = df_mvt_stock.apply(update_emplacement, axis=1)
         df_mvt_stock = df_mvt_stock.drop(columns=['prefix_emplacement'], errors='ignore')
 
-    # 👉 Ici tu continues avec ton affichage Streamlit habituel
+    # --- Liste des MGB à traiter en "Consigne" (XX) ---
+    MGB_consigne = [
+        "226796", "890080", "179986", "885177", "890050", "226923", "834397", "890070",
+        "886655", "226725", "226819", "226681", "897881", "897885", "897890", "897698",
+        "226658", "226783", "896634", "226654", "226814", "226830", "173907", "897814",
+        "226781", "897704", "886648", "881810", "226864", "226780", "633936", "226932",
+        "226995", "226661", "226690", "180719", "226993", "226712", "897082", "135185",
+        "226762", "180717", "226971", "226704", "872843", "226875", "226662", "180716",
+        "226820", "892476", "893404"
+    ]
 
     
     # Afficher le tableau des écarts
@@ -554,7 +563,10 @@ def Analyse_stock():
         df_filtered = df_filtered[df_filtered["Deja_Present"].astype(bool) == val_bool]
 
     # --- Affichage ---
-    st.dataframe(df_filtered.style.format({
+    # On enlève les MGB présents dans la liste de consignes
+    df_affiche = df_filtered[~df_filtered["MGB_6"].astype(str).isin(MGB_consigne)].copy()
+
+    st.dataframe(df_affiche.style.format({
         '€_Unitaire': "{:.2f}",
         'Valeur_Difference': "{:.2f}"
     }))
@@ -563,7 +575,7 @@ def Analyse_stock():
 
     col1, col2 = st.columns(2)
     # compter le nombre de ligne :
-    col1.subheader(f"Nombre de lignes : {len(df_filtered)}")
+    col1.subheader(f"Nombre de lignes (hors consignes): {len(df_affiche)}")
 
     # valeur total :
     total_value = df_filtered['Valeur_Difference'].sum()
@@ -667,6 +679,36 @@ def Analyse_stock():
                 df_existing[col] = ""
 
         st.session_state.df_comments = df_existing.copy()
+    
+        # --- Injection automatique des MGB de consigne dans df_comments ---
+        df_comments = st.session_state.df_comments.copy()
+        df_comments["MGB_6"] = df_comments["MGB_6"].astype(str)
+
+        # Récupérer les infos depuis df_sorties si dispo
+        df_sorties["MGB_6"] = df_sorties["MGB_6"].astype(str)
+        df_consigne = df_sorties[df_sorties["MGB_6"].isin(MGB_consigne)].copy()
+
+        # Colonnes nécessaires
+        for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
+            if col not in df_consigne.columns:
+                df_consigne[col] = ""
+
+        # Remplir les champs de consigne
+        today = datetime.today().strftime("%d-%m-%Y")
+        df_consigne["Commentaire"] = "Consigne"
+        df_consigne["Date_Dernier_Commentaire"] = today
+        df_consigne["Choix_traitement"] = "XX"
+
+        # Ne pas dupliquer si déjà présent
+        mgb_existants = df_comments["MGB_6"].unique().tolist()
+        df_a_ajouter = df_consigne[~df_consigne["MGB_6"].isin(mgb_existants)]
+
+        if not df_a_ajouter.empty:
+            df_comments = pd.concat([df_comments, df_a_ajouter], ignore_index=True)
+            st.session_state.df_comments = df_comments
+            df_comments.to_parquet(parquet_path, index=False)
+            st.info(f"{len(df_a_ajouter)} lignes 'Consigne' ajoutées automatiquement ✅")
+
 
     # --- Zone d’ajout/modification de commentaire ---
     mgb_text = f"{mgb_selected} - {stock_info.iloc[0]['Désignation'] if not stock_info.empty else ''}"
@@ -678,42 +720,70 @@ def Analyse_stock():
     """, unsafe_allow_html=True)
 
     df_temp = st.session_state.df_comments
+
     if mgb_selected not in df_temp["MGB_6"].values:
         st.warning(f"MGB {mgb_selected} non trouvé dans le fichier parquet.")
         st.stop()
 
     index = df_temp.index[df_temp["MGB_6"] == mgb_selected][0]
     commentaire_existant = df_temp.at[index, "Commentaire"]
+    
+    # Si la colonne n’existe pas encore, on la crée
+    if "Choix_traitement" not in df_temp.columns:
+        df_temp["Choix_traitement"] = ""
+    
+    choix_existant = df_temp.at[index, "Choix_traitement"]
 
     # --- Réinitialisation automatique du champ texte quand on change de MGB ---
     if "last_mgb" not in st.session_state:
         st.session_state.last_mgb = mgb_selected
 
-    # Si on change d’article, on vide le champ de commentaire
     if mgb_selected != st.session_state.last_mgb:
-        st.session_state[f"commentaire_{mgb_selected}"] = ""  # reset du champ texte
+        st.session_state[f"commentaire_{mgb_selected}"] = ""  # reset texte
+        st.session_state[f"choix_{mgb_selected}"] = None      # reset choix
         st.session_state.last_mgb = mgb_selected
 
     # --- Zone d’édition du commentaire ---
 
     if pd.isna(commentaire_existant) or commentaire_existant == "":
         commentaire = st.text_area("Écrire votre commentaire :")
+        choix_source = st.radio(
+            "Sélectionner le chargé du traitement (obligatoire) :",
+            options=["METRO", "IDL"],
+            index=None,
+            key=f"choix_{mgb_selected}",
+        )
         if st.button("Ajouter le commentaire"):
+            if not choix_source:
+                st.error("Vous devez sélectionner METRO ou IDL avant de valider.")
+                st.stop()
             today = datetime.today().strftime("%d-%m-%Y")
             df_temp.at[index, "Commentaire"] = commentaire
             df_temp.at[index, "Date_Dernier_Commentaire"] = today
+            df_temp.at[index, "Choix_traitement"] = choix_source
             st.session_state.df_comments = df_temp
             df_temp.to_parquet(parquet_path, index=False)
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
+        st.write(f"🔹 Traitement actuel : {choix_existant if choix_existant else 'Non défini'}")
         modifier = st.radio("Voulez-vous changer ce commentaire ?", ("Non", "Oui"))
         if modifier == "Oui":
             commentaire = st.text_area("Écrire votre nouveau commentaire :", commentaire_existant)
+            choix_source = st.radio(
+            "Sélectionner le chargé du traitement (obligatoire) :",
+                options=["METRO", "IDL"],
+                index=["METRO", "IDL"].index(choix_existant) if choix_existant in ["METRO", "IDL"] else None,
+                key=f"choix_{mgb_selected}",
+            )
             if st.button("Mettre à jour le commentaire"):
+                if not choix_source:
+                    st.error("Vous devez sélectionner METRO ou IDL avant de valider.")
+                    st.stop()
                 today = datetime.today().strftime("%d-%m-%Y")
                 df_temp.at[index, "Commentaire"] = commentaire
                 df_temp.at[index, "Date_Dernier_Commentaire"] = today
+                df_temp.at[index, "Choix_traitement"] = choix_source
                 st.session_state.df_comments = df_temp
                 df_temp.to_parquet(parquet_path, index=False)
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
@@ -726,8 +796,11 @@ def Analyse_stock():
             super().__init__(orientation="L", unit="mm", format="A4")
             self.headers = headers
             self.col_widths = col_widths
+            self.first_page = True
 
         def header(self):
+            if self.first_page:
+                return
             self.set_font("Arial", "B", 14)
             self.cell(0, 10, f"Rapport Ecart {datetime.today().strftime('%d/%m/%Y')}", ln=True, align="C")
             self.ln(5)
@@ -745,31 +818,155 @@ def Analyse_stock():
     # Génération du PDF
     # --------------------------
     if st.button("Générer le PDF du rapport"):
+        df_for_pdf = st.session_state.df_comments.copy()
         df_for_pdf = st.session_state.df_comments[
             st.session_state.df_comments["Date_Dernier_Commentaire"].notna() &
             (st.session_state.df_comments["Date_Dernier_Commentaire"] != "")
         ].fillna("")
 
-        col_widths = [20, 80, 20, 40, 110]
-        headers = ["MGB_6", "Désignation", "Difference", "Date Commentaire", "Commentaire"]
+        # Fusion avec df_sorties pour ajouter la colonne 'Cellule'
+        if 'df_sorties' in locals():
+            # S’assurer qu’il y a une seule ligne par MGB_6
+            df_cellules = (
+                df_sorties[['MGB_6', 'Cellule']]
+                .dropna(subset=['MGB_6'])
+                .drop_duplicates(subset=['MGB_6'], keep='first')
+            )
+
+            df_for_pdf = df_for_pdf.merge(
+                df_cellules,
+                on='MGB_6',
+                how='left'
+            )
+        else:
+            st.warning("df_sorties non trouvé, la colonne 'Cellule' ne sera pas ajoutée.")
+            df_for_pdf["Cellule"] = ""
+        
+            # Convertir la date en format réel pour tri
+        df_for_pdf["Date_Dernier_Commentaire_dt"] = pd.to_datetime(
+            df_for_pdf["Date_Dernier_Commentaire"], format="%d-%m-%Y", errors="coerce"
+        )
+
+        # Ordonner les lignes :
+        # 1️ METRO par date croissante
+        # 2️ IDL par date croissante
+        df_for_pdf = pd.concat([
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "METRO"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "IDL"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf[df_for_pdf["Choix_traitement"] == ""].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "XX"].sort_values("Date_Dernier_Commentaire_dt")
+        ])
+
+        col_widths = [15, 70, 15, 15, 15, 15, 20, 15, 105]
+        headers = ["MGB_6", "Désignation","Cellule","MMS","WMS", "Diff", "Date", "Suivi", "Commentaire"]
 
         pdf = PDF(headers, col_widths)
         pdf.set_auto_page_break(auto=True, margin=20)
+
+        # --- Préparation des données pour la synthèse ---
+
+        # Exclure les MGB de consignes
+        df_for_pdf_no_consigne = df_for_pdf[~df_for_pdf["MGB_6"].astype(str).isin(MGB_consigne)].copy()
+
+        # Total (hors consignes)
+        total_lignes = len(df_affiche)
+        total_valeur = df_affiche['Valeur_Difference'].sum()
+
+        # Lignes METRO
+        df_metro = df_for_pdf_no_consigne[df_for_pdf_no_consigne["Choix_traitement"] == "METRO"]
+        nb_metro = len(df_metro)
+        val_metro = pd.to_numeric(
+            df_metro.get("Valeur_Difference", pd.Series([0]*nb_metro)),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        # Lignes IDL
+        df_idl = df_for_pdf_no_consigne[df_for_pdf_no_consigne["Choix_traitement"] == "IDL"]
+        nb_idl = len(df_idl)
+        val_idl = pd.to_numeric(
+            df_idl.get("Valeur_Difference", pd.Series([0]*nb_idl)),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        # Lignes non traitées (non présentes dans df_for_pdf car pas de commentaire)
+        df_non = df_affiche[~df_affiche["MGB_6"].astype(str).isin(df_for_pdf_no_consigne["MGB_6"].astype(str))]
+        nb_non = len(df_non)
+        val_non = pd.to_numeric(
+            df_non.get("Valeur_Difference", pd.Series([0]*nb_non)),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        # --- 1ere page = Page de synthèse ---
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, "Tableau de synthèse des écarts", ln=True, align="C")
+        pdf.ln(8)
+
+        pdf.set_font("Arial", "", 10)
+
+        synthese_data = [            
+            ("Lignes METRO", str(nb_metro), f"{val_metro:,.2f} EUR"),
+            ("Lignes IDL", str(nb_idl), f"{val_idl:,.2f} EUR"),
+            ("Lignes non traitées", str(nb_non), f"{val_non:,.2f} EUR"),
+            ("Total écarts (hors consignes)", str(total_lignes), f"{total_valeur:,.2f} EUR"),
+
+        ]
+
+        col_widths_syn = [90, 40, 60]
+        pdf.set_fill_color(220, 220, 220)
+        pdf.cell(col_widths_syn[0], 8, "Catégorie", border=1, align="C", fill=True)
+        pdf.cell(col_widths_syn[1], 8, "Nombre", border=1, align="C", fill=True)
+        pdf.cell(col_widths_syn[2], 8, "Valeur Totale", border=1, align="C", fill=True)
+        pdf.ln()
+
+        pdf.set_font("Arial", "", 9)
+        for row in synthese_data:
+            pdf.cell(col_widths_syn[0], 8, row[0], border=1)
+            pdf.cell(col_widths_syn[1], 8, row[1], border=1, align="C")
+            pdf.cell(col_widths_syn[2], 8, row[2], border=1, align="R")
+            pdf.ln()
+
+        pdf.ln(10)
+        pdf.set_font("Arial", "I", 9)
+        pdf.cell(0, 6, "Les lignes non traitées ne figurent pas dans le rapport détaillé.", ln=True)
+
+
+
+        pdf.first_page = False  # Les pages suivantes auront les en-têtes
+
+        # Nouvelle page pour le détail complet
         pdf.add_page()
         pdf.set_font("Arial", "", 9)
 
-        for _, row in df_for_pdf.iterrows():
-            pdf.cell(col_widths[0], 8, str(row["MGB_6"]), border=1, align="C")
-            pdf.cell(col_widths[1], 8, str(row["Désignation"]), border=1)
-            pdf.cell(col_widths[2], 8, str(round(row.get("Difference_MMS-WMS", 0), 2)), border=1, align="C")
-            pdf.cell(col_widths[3], 8, str(row["Date_Dernier_Commentaire"]), border=1, align="C")
 
+
+        for _, row in df_for_pdf.iterrows():
+            choix = row.get("Choix_traitement", "")
+            if choix == "METRO":
+                pdf.set_fill_color(255, 255, 153)  # Jaune clair
+            elif choix == "IDL":
+                pdf.set_fill_color(173, 216, 230)  # Bleu clair
+            elif choix == "XX":
+                pdf.set_fill_color(255, 200, 200)  # Rouge clair (consignes)
+            else:
+                pdf.set_fill_color(255, 255, 255)  # Blanc
+
+            # ligne du tableau
+            pdf.cell(col_widths[0], 6, str(row["MGB_6"]), border=1, align="C", fill=True)
+            pdf.cell(col_widths[1], 6, str(row["Désignation"]), border=1, fill=True)
+            pdf.cell(col_widths[2], 6, str(row.get("Cellule", "")), border=1, align="C", fill=True)
+            pdf.cell(col_widths[3], 6, str(row["MMS_Stock"]), border=1, fill=True)
+            pdf.cell(col_widths[4], 6, str(row["WMS_Stock"]), border=1, fill=True)
+            pdf.cell(col_widths[5], 6, str(round(row.get("Difference_MMS-WMS", 0), 2)), border=1, align="C", fill=True)
+            pdf.cell(col_widths[6], 6, str(row["Date_Dernier_Commentaire"]), border=1, align="C", fill=True)
+            pdf.cell(col_widths[7], 6, str(choix), border=1, align="C", fill=True)
+            
             x_before = pdf.get_x()
             y_before = pdf.get_y()
-            pdf.multi_cell(col_widths[4], 8, str(row["Commentaire"]), border=1)
+            pdf.multi_cell(col_widths[8], 6, str(row["Commentaire"]), border=1, fill=True)
             y_after = pdf.get_y()
-            pdf.set_xy(x_before + col_widths[4], y_before)
-            pdf.ln(max(8, y_after - y_before))
+            pdf.set_xy(x_before + col_widths[8], y_before)
+            pdf.ln(max(6, y_after - y_before))
 
         pdf_bytes = pdf.output(dest="S").encode("latin-1")
 
@@ -796,7 +993,7 @@ tabs = {
 
 def main():
     
-    IMAGE_PATH_1 = Path(__file__).parent / "images" / "logo_IDL.jpg"
+    IMAGE_PATH_1 = Path(__file__).parent / "Images" / "logo_IDL.jpg"
     st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
     st.sidebar.header("Navigation")
     selected_tab = st.sidebar.radio("", list(tabs.keys()))
@@ -804,7 +1001,7 @@ def main():
 
     # Sidebar images
     
-    IMAGE_PATH_2 = Path(__file__).parent / "images" / "Logo_Metro.webp"
+    IMAGE_PATH_2 = Path(__file__).parent / "Images" / "Logo_Metro.webp"
     st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
 
      # --- Bouton actualiser ---
