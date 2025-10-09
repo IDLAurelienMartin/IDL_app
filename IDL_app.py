@@ -378,40 +378,35 @@ def tab_QR_Codes():
     elif option == 'EAN':
         st.subheader("EAN :")
         
-        EAN_input = st.text_input("Entrez un code EAN (13 chiffres)")
+        EAN_input = st.text_input("Entrez un code EAN")
 
         if st.button("Générer le Code Barre"): 
-            if not EAN_input.isdigit() or len(EAN_input) != 13:
-                # Cas invalide → on sort ici, aucune autre ligne ne s'exécute
-                st.error("Le code EAN doit être un nombre de 13 chiffres.")
-            
-            else:
-                try:
-                    # Cas valide → génération du code-barres
-                    ean = EAN13(EAN_input, writer=ImageWriter())
+            try:
+                # Cas valide → génération du code-barres
+                ean = EAN13(EAN_input, writer=ImageWriter())
 
-                    buffer = BytesIO()
-                    ean.write(buffer)
-                    buffer.seek(0)
+                buffer = BytesIO()
+                ean.write(buffer)
+                buffer.seek(0)
 
-                    st.image(buffer, caption=f"Code barre du EAN {EAN_input}", use_container_width=True)
+                st.image(buffer, caption=f"Code barre du EAN {EAN_input}", use_container_width=True)
 
-                except Exception as e:
-                    # Ici on intercepte toute autre erreur
-                    st.error("Une erreur est survenue lors de la génération du code barre.")
+            except Exception as e:
+                # Ici on intercepte toute autre erreur
+                st.error("Une erreur est survenue lors de la génération du code barre.")
 
-                # Boutons pour téléchargement et effacer
-                col1, col2 = st.columns(2)
-                with col1:
-                        st.download_button(
-                        label="Télécharger le code barre",
-                        data=buffer,
-                        file_name=f"Code_barre_{EAN_input}.png",
-                        mime="image/png"
-                        )
-                with col2:
-                        if st.button("Effacer le code barre"):
-                                st.experimental_rerun()
+            # Boutons pour téléchargement et effacer
+            col1, col2 = st.columns(2)
+            with col1:
+                    st.download_button(
+                    label="Télécharger le code barre",
+                    data=buffer,
+                    file_name=f"Code_barre_{EAN_input}.png",
+                    mime="image/png"
+                    )
+            with col2:
+                    if st.button("Effacer le code barre"):
+                            st.experimental_rerun()
 
 
 
@@ -459,7 +454,9 @@ def Analyse_stock():
         "226781", "897704", "886648", "881810", "226864", "226780", "633936", "226932",
         "226995", "226661", "226690", "180719", "226993", "226712", "897082", "135185",
         "226762", "180717", "226971", "226704", "872843", "226875", "226662", "180716",
-        "226820", "892476", "893404"
+        "226820", "892476", "893404", "226876", "633937", "226900", "897083", "881813",
+        "135181", "383779", "226802", "897816", "180720", "173902", "226840", "226889",
+        "890060"
     ]
 
     
@@ -566,6 +563,10 @@ def Analyse_stock():
     # On enlève les MGB présents dans la liste de consignes
     df_affiche = df_filtered[~df_filtered["MGB_6"].astype(str).isin(MGB_consigne)].copy()
 
+    df_affiche = df_affiche.reindex(
+        df_affiche["Difference_MMS-WMS"].abs().sort_values(ascending=False).index
+    )
+
     st.dataframe(df_affiche.style.format({
         '€_Unitaire': "{:.2f}",
         'Valeur_Difference': "{:.2f}"
@@ -578,7 +579,7 @@ def Analyse_stock():
     col1.subheader(f"Nombre de lignes (hors consignes): {len(df_affiche)}")
 
     # valeur total :
-    total_value = df_filtered['Valeur_Difference'].sum()
+    total_value = df_affiche['Valeur_Difference'].sum()
     col2.subheader(f"Valeur total des écarts : {total_value:.2f} €")
 
     # separation :
@@ -586,7 +587,7 @@ def Analyse_stock():
 
     # Menu déroulant MGB_6
     col1, col2 = st.columns(2)
-    mgb_list = df_filtered['MGB_6'].dropna().unique() if not df_filtered.empty else []
+    mgb_list = df_affiche['MGB_6'].dropna().unique() if not df_affiche.empty else []
     mgb_selected = col1.selectbox("Choisir un MGB", mgb_list)
 
     # Filtrer les DataFrames
@@ -681,33 +682,48 @@ def Analyse_stock():
         st.session_state.df_comments = df_existing.copy()
     
         # --- Injection automatique des MGB de consigne dans df_comments ---
+
+        # Copie du DataFrame de commentaires existant
         df_comments = st.session_state.df_comments.copy()
         df_comments["MGB_6"] = df_comments["MGB_6"].astype(str)
 
-        # Récupérer les infos depuis df_sorties si dispo
-        df_sorties["MGB_6"] = df_sorties["MGB_6"].astype(str)
-        df_consigne = df_sorties[df_sorties["MGB_6"].isin(MGB_consigne)].copy()
+        # On s’appuie maintenant sur df_affiche (fichier des écarts)
+        df_ecart_stock_last["MGB_6"] = df_ecart_stock_last["MGB_6"].astype(str)
+
+        # On garde uniquement les MGB de consigne présents dans df_affiche
+        df_consigne = df_ecart_stock_last[df_ecart_stock_last["MGB_6"].isin(MGB_consigne)].copy()
 
         # Colonnes nécessaires
         for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
             if col not in df_consigne.columns:
                 df_consigne[col] = ""
 
-        # Remplir les champs de consigne
+        # Définir les valeurs de consigne
         today = datetime.today().strftime("%d-%m-%Y")
         df_consigne["Commentaire"] = "Consigne"
         df_consigne["Date_Dernier_Commentaire"] = today
         df_consigne["Choix_traitement"] = "XX"
 
-        # Ne pas dupliquer si déjà présent
-        mgb_existants = df_comments["MGB_6"].unique().tolist()
-        df_a_ajouter = df_consigne[~df_consigne["MGB_6"].isin(mgb_existants)]
+        # --- Appliquer ou ajouter les lignes correspondantes ---
+        for _, row in df_consigne.iterrows():
+            mgb = row["MGB_6"]
 
-        if not df_a_ajouter.empty:
-            df_comments = pd.concat([df_comments, df_a_ajouter], ignore_index=True)
-            st.session_state.df_comments = df_comments
-            df_comments.to_parquet(parquet_path, index=False)
-            st.info(f"{len(df_a_ajouter)} lignes 'Consigne' ajoutées automatiquement ✅")
+            # Si le MGB existe déjà dans df_comments → mise à jour
+            if mgb in df_comments["MGB_6"].values:
+                df_comments.loc[df_comments["MGB_6"] == mgb, 
+                    ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]] = [
+                        "Consigne", today, "XX"
+                    ]
+            # Sinon → ajout d'une nouvelle ligne
+            else:
+                df_comments = pd.concat([df_comments, pd.DataFrame([row])], ignore_index=True)
+
+        # Sauvegarde et mise à jour de la session
+        st.session_state.df_comments = df_comments
+        df_comments.to_parquet(parquet_path, index=False)
+
+        st.info(f"{len(df_consigne)} lignes 'Consigne' mises à jour ou ajoutées (présentes dans df_affiche) ✅")
+
 
 
     # --- Zone d’ajout/modification de commentaire ---
