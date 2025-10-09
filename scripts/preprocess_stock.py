@@ -60,7 +60,7 @@ def load_data():
     df_ecart_stock_last = pd.read_excel(file_last)
 
     # === Chargement des fichiers de référence ===
-    file_article = data_dir / "Article_€.xlsx"
+    file_article = data_dir / "Article_euros.xlsx"
     file_inventaire = data_dir / "Inventory_21_09_2025.xlsx"
 
     df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
