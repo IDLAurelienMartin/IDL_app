@@ -415,9 +415,14 @@ def Analyse_stock():
     st.set_page_config(layout="wide")
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
+    # --- Charger les fichiers depuis le cache (OneDrive) ---
+    onedrive_cache_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
+    data_dir = onedrive_cache_dir
 
-    # --- Charger les fichiers depuis le cache ---
-    data_dir = Path(__file__).resolve().parents[1] / "IDL" / "Data" / "Cache"
+    if not data_dir.exists():
+        st.error(f"Le dossier cache OneDrive est introuvable : {data_dir}")
+        return
+
 
     try:
         df_article_euros = pd.read_parquet(data_dir / "article_euros.parquet")
@@ -644,8 +649,9 @@ def Analyse_stock():
     st.divider()
 
     # --- Lecture du chemin du dernier fichier parquet ---
-    data_dir = Path(__file__).resolve().parent / "Data" / "Cache"
-    file_last_txt = data_dir / "file_last.txt"
+    onedrive_cache_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
+    file_last_txt = onedrive_cache_dir / "file_last.txt"
+
 
     file_last = None
     if file_last_txt.exists():
@@ -1009,16 +1015,27 @@ tabs = {
 
 def main():
     
-    IMAGE_PATH_1 = Path(__file__).parent / "Images" / "logo_IDL.jpg"
-    st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
+    # Nouveau dossier de base : ton OneDrive
+    onedrive_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app")
+
+    # Chemins des images dans ton OneDrive
+    IMAGE_PATH_1 = onedrive_dir / "Images" / "logo_IDL.jpg"
+    IMAGE_PATH_2 = onedrive_dir / "Images" / "Logo_Metro.webp"
+
+    # Vérification d’existence (pour éviter les erreurs Streamlit si un fichier manque)
+    if IMAGE_PATH_1.exists():
+        st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
+    else:
+        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_1}")
+
     st.sidebar.header("Navigation")
     selected_tab = st.sidebar.radio("", list(tabs.keys()))
     tabs[selected_tab]()
 
-    # Sidebar images
-    
-    IMAGE_PATH_2 = Path(__file__).parent / "Images" / "Logo_Metro.webp"
-    st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
+    if IMAGE_PATH_2.exists():
+        st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
+    else:
+        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_2}")
 
      # --- Bouton actualiser ---
     if st.sidebar.button("Actualiser les données"):

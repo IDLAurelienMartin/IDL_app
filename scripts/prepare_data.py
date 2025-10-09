@@ -1,9 +1,15 @@
 # scripts/prepare_data.py
+import sys
 from pathlib import Path
 import pandas as pd
-from preprocess_stock import load_data, preprocess_data
+sys.path.append(str(Path(__file__).resolve().parent))
+import pandas as pd
+from pathlib import Path
+from preprocess_stock import load_data
+from preprocess_stock import preprocess_data
 
 def prepare_stock_data():
+    print("\n=== DÉMARRAGE DU SCRIPT prepare_stock_data ===")
 
     (
         df_mvt_stock,
@@ -34,9 +40,12 @@ def prepare_stock_data():
         df_mvt_stock,
     )
 
-    output_dir = Path(__file__).resolve().parent.parent / "Data" / "Cache"
+    # === Dossier Cache dans OneDrive ===
+    output_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"📂 Dossier de sortie : {output_dir}")
 
+    # === Dictionnaire des DataFrames à sauvegarder ===
     datasets = {
         "mvt_stock": df_mvt_stock,
         "reception": df_reception,
@@ -47,16 +56,29 @@ def prepare_stock_data():
         "article_euros": df_article_euros,
     }
 
+    # === Sauvegarde en parquet ===
     for name, df in datasets.items():
-        df.to_parquet(output_dir / f"{name}.parquet", index=False)
+        file_path = output_dir / f"{name}.parquet"
+        if not df.empty:
+            df.to_parquet(file_path, index=False)
+            print(f"✅ Fichier sauvegardé : {file_path} ({len(df)} lignes)")
+        else:
+            print(f"⚠️ {name} est vide — non sauvegardé")
 
-    # Sauvegarde du chemin du dernier fichier parquet fixe (pas celui du Excel source)
+    # === Sauvegarde du chemin du dernier fichier Parquet ===
     file_last_path = output_dir / "file_last.txt"
     file_last_parquet = output_dir / "ecart_stock_last.parquet"
 
     with open(file_last_path, "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet).replace("\\", "/"))
 
+    print("\n=== SYNTHÈSE DU TRAITEMENT ===")
+    print(f"Fichiers Parquet créés dans : {output_dir}")
+    print(f"Chemin du dernier Parquet enregistré dans : {file_last_path}")
+
+    print("\n✅ Préparation terminée avec succès.")
+
 if __name__ == "__main__":
     prepare_stock_data()
+
 

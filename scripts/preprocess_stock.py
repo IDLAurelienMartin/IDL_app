@@ -4,77 +4,89 @@ import glob
 import pandas as pd
 from pathlib import Path
 import sys
-
-from pathlib import Path
-import pandas as pd
-import glob, os
+from datetime import datetime
 
 def load_data():
     """
-    Charge toutes les données Excel depuis les sous-dossiers Data/.
-    Retourne les DataFrames bruts nécessaires au traitement.
+    Charge toutes les données Excel depuis OneDrive.
+    Ne conserve que les fichiers postérieurs à la date de l'inventaire.
     """
 
-    # === Détection dynamique du dossier Data (marche localement ET sur Render) ===
-    current_dir = Path(__file__).resolve().parent
-    while current_dir != current_dir.parent:
-        if (current_dir / "Data").exists():
-            BASE_DIR = current_dir
-            break
-        current_dir = current_dir.parent
-    else:
-        raise FileNotFoundError("Impossible de trouver le dossier Data depuis " + str(Path(__file__).resolve()))
+    # === Dossiers OneDrive ===
+    onedrive_base = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app")
+    dossier_mvt_stock = onedrive_base / "Mvt_stock"
+    dossier_reception = onedrive_base / "Historique_Reception"
+    dossier_sorties = onedrive_base / "Historique_des_Sorties"
+    dossier_ecart_stock = onedrive_base / "Ecart_Stock"
+    file_article = onedrive_base / "Article_euros.xlsx"
+    file_inventaire = onedrive_base / "Inventory_21_09_2025.xlsx"
+    cache_dir = onedrive_base / "Cache"
 
-    data_dir = BASE_DIR / "Data"
-    cache_dir = data_dir / "Cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Dossier DATA détecté : {data_dir}")
-    print(f"Dossier CACHE détecté : {cache_dir}")
+    # === Lecture de la date de référence (fichier inventaire) ===
+    if not file_inventaire.exists():
+        raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
+    date_ref = datetime.fromtimestamp(file_inventaire.stat().st_mtime)
+    print(f"Seuls les fichiers modifiés après {date_ref.strftime('%d/%m/%Y %H:%M')} seront chargés.")
 
-    # Vérifie si le cache existe
-    if not cache_dir.exists():
-        raise FileNotFoundError(f"Le dossier de cache n'existe pas : {cache_dir}")
-
-    # === Chargement des fichiers Excel ===
+    # === Fonction de concaténation filtrée et récursive ===
     def concat_excel_from_folder(folder):
-        fichiers = glob.glob(str(folder / "*.xlsx"))
+        """
+        Charge tous les fichiers Excel récents depuis un dossier et ses sous-dossiers.
+        Ne garde que ceux plus récents que le fichier d'inventaire.
+        """
+        if not folder.exists():
+            print(f"⚠️ Dossier introuvable : {folder}")
+            return pd.DataFrame()
+
+        # Recherche dans tous les sous-dossiers
+        fichiers = [
+            Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
+            if Path(f).stat().st_mtime > file_inventaire.stat().st_mtime
+        ]
+
+        print(f"{len(fichiers)} fichier(s) récents trouvés (y compris sous-dossiers) dans {folder}")
+
         if not fichiers:
             return pd.DataFrame()
+
+        # Concatène les fichiers Excel trouvés
         return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
 
-    dossier_mvt_stock = data_dir / "Mvt_Stock"
-    dossier_reception = data_dir / "Historique_Réception"
-    dossier_sorties = data_dir / "Historique_des_Sorties"
-    dossier_ecart_stock = data_dir / "Ecart_Stock"
 
+    # === Chargement des datasets ===
     df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock)
     df_reception = concat_excel_from_folder(dossier_reception)
     df_sorties = concat_excel_from_folder(dossier_sorties)
 
+    # === Cas spécial : ECART STOCK ===
     files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
     if len(files) < 2:
-        raise FileNotFoundError("Pas assez de fichiers dans Ecart_Stock pour comparaison.")
+        raise FileNotFoundError(f"Pas assez de fichiers dans {dossier_ecart_stock} pour comparaison.")
     file_prev, file_last = files[-2], files[-1]
 
     df_ecart_stock_prev = pd.read_excel(file_prev)
     df_ecart_stock_last = pd.read_excel(file_last)
 
-    # === Chargement des fichiers de référence ===
-    file_article = data_dir / "Article_euros.xlsx"
-    file_inventaire = data_dir / "Inventory_21_09_2025.xlsx"
-
+    # === Fichiers de référence ===
     df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
-    df_inventaire = pd.read_excel(file_inventaire) if file_inventaire.exists() else pd.DataFrame()
+    df_inventaire = pd.read_excel(file_inventaire)
 
-    # === Gestion du cache Parquet ===
+    # === Gestion du cache ===
     file_last_parquet = cache_dir / "ecart_stock_last.parquet"
     file_last_txt = cache_dir / "file_last.txt"
 
     with open(file_last_txt, "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet).replace("\\", "/"))
 
-    print(f"Chemin final du cache Parquet : {file_last_parquet}")
-    print(f"Fichier existe : {file_last_parquet.exists()}")
+    print(f"\n=== SYNTHÈSE DU CHARGEMENT ===")
+    print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
+    print(f"Réception : {len(df_reception)} lignes")
+    print(f"Sorties   : {len(df_sorties)} lignes")
+    print(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
+    print(f"Article_euros : {len(df_article_euros)} lignes")
+    print(f"Inventaire : {len(df_inventaire)} lignes")
 
     return (
         df_mvt_stock,
@@ -86,7 +98,6 @@ def load_data():
         df_article_euros,
         file_last,
     )
-
 
 def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock):  
 
