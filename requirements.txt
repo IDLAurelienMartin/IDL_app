@@ -60,8 +60,10 @@ reportlab==4.1.0
 python-barcode
 streamlit-aggrid
 fpdf
+dropbox
 openpyxl
-
+xlrd
+pyarrow
 
 
 
