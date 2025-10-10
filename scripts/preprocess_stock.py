@@ -1,10 +1,20 @@
 # scripts/preprocess_stock.py
+import dropbox
+import pandas as pd
+from io import BytesIO
+from datetime import datetime
+from pathlib import Path
 import os
 import glob
-import pandas as pd
-from pathlib import Path
-import sys
-from datetime import datetime
+
+# === Correction SSL pour Dropbox (certifi + proxy entreprise) ===
+import ssl, certifi
+
+try:
+    # Forcer l'utilisation du certificat certifi pour toutes les connexions HTTPS
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+except Exception as e:
+    print(f"⚠️ Impossible d'appliquer le contexte SSL certifi : {e}")
 
 def load_data():
     """
@@ -514,40 +524,66 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         # ============================================================
         # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
-        BASE_DIR = Path(__file__).resolve().parent.parent
-        data_dir = BASE_DIR / "Data" / "Cache"
-        parquet_path = data_dir / "ecart_stock_last.parquet"
+        
+        ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+        dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
-        if parquet_path.exists():
-            try:
-                df_old = pd.read_parquet(parquet_path)
+        dropbox_path = "/Data_app/Cache/inventaire.parquet"
 
-                if {"MGB_6", "Commentaire", "Date_Dernier_Commentaire"}.issubset(df_old.columns):
-                    print("Fusion des anciens commentaires avec les nouvelles données...")
+        try:
+            _, res = dbx.files_download(dropbox_path)
+            df_old = pd.read_parquet(BytesIO(res.content))
+            print("Fichier parquet téléchargé depuis Dropbox.")
+        except Exception as e:
+            print(f"Erreur téléchargement Dropbox : {e}")
+            df_old = pd.DataFrame()  # éviter NameError plus tard
 
-                    # Fusion sur MGB_6
-                    df_ecart_stock_last = df_ecart_stock_last.merge(
-                        df_old[["MGB_6", "Commentaire", "Date_Dernier_Commentaire"]],
-                        on="MGB_6",
-                        how="left",
-                        suffixes=("", "_old")
-                    )
 
-                    # Conserver les anciens commentaires si les nouveaux sont vides
-                    df_ecart_stock_last["Commentaire"] = df_ecart_stock_last["Commentaire"].combine_first(
-                        df_ecart_stock_last["Commentaire_old"]
-                    )
-                    df_ecart_stock_last["Date_Dernier_Commentaire"] = df_ecart_stock_last["Date_Dernier_Commentaire"].combine_first(
-                        df_ecart_stock_last["Date_Dernier_Commentaire_old"]
-                    )
+        if not df_old.empty:
+            expected = {"MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"}
 
-                    # Supprimer les colonnes intermédiaires
-                    df_ecart_stock_last.drop(columns=["Commentaire_old", "Date_Dernier_Commentaire_old"], inplace=True)
+            if expected.issubset(set(df_old.columns)):
+                print("Fusion des anciens commentaires et choix traitement avec les nouvelles données...")
 
-            except Exception as e:
-                print(f"Impossible de restaurer les anciens commentaires : {e}")
+                # --- s'assurer qu'il n'y a pas de doublons côté ancien fichier (garder le dernier) ---
+                if df_old["MGB_6"].duplicated().any():
+                    print(f"{df_old['MGB_6'].duplicated().sum()} doublons trouvés dans df_old -> on garde la dernière occurrence.")
+                    df_old = df_old.sort_values("Date_Dernier_Commentaire", ascending=True).drop_duplicates(subset="MGB_6", keep="last")
+
+                # --- fusionner (suffixe _old) ---
+                df_ecart_stock_last = df_ecart_stock_last.merge(
+                    df_old[["MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]],
+                    on="MGB_6",
+                    how="left",
+                    suffixes=("", "_old")
+                )
+
+                # --- normaliser les noms de colonnes (strip) ---
+                df_ecart_stock_last.columns = [c.strip() if isinstance(c, str) else c for c in df_ecart_stock_last.columns]
+
+                # --- pour chaque colonne cible, remplacer les valeurs NULL ou "" par la valeur _old ---
+                for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
+                    old_col = f"{col}_old"
+                    if old_col in df_ecart_stock_last.columns:
+                        mask_missing = df_ecart_stock_last[col].isnull() | (df_ecart_stock_last[col].astype(str).str.strip() == "")
+                        n_to_fill = mask_missing.sum()
+                        if n_to_fill:
+                            print(f"Remplissage de {n_to_fill} valeurs manquantes dans '{col}' depuis '{old_col}'.")
+                            df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
+                    else:
+                        print(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
+
+                # --- supprimer toutes les colonnes finissant par _old ---
+                old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
+                if old_cols:
+                    print(f"🧹 Suppression des colonnes temporaires : {old_cols}")
+                    df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
+                else:
+                    print("Aucune colonne *_old à supprimer.")
+
+            else:
+                print("Le parquet existant ne contient pas toutes les colonnes attendues :", expected - set(df_old.columns))
         else:
-            print("Aucun ancien parquet trouvé, création initiale du fichier.")
-
+            print("ℹAucun ancien parquet à fusionner — création initiale du fichier.")
 
         return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock

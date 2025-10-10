@@ -5,7 +5,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 import qrcode
-from barcode.ean import EAN13
+from barcode.ean import EAN13, EAN8
 from barcode.writer import ImageWriter
 from pathlib import Path
 import glob
@@ -16,6 +16,7 @@ from fpdf import FPDF
 import io
 from datetime import datetime
 import subprocess
+import dropbox
     
 
 def tab_home():
@@ -378,35 +379,43 @@ def tab_QR_Codes():
     elif option == 'EAN':
         st.subheader("EAN :")
         
-        EAN_input = st.text_input("Entrez un code EAN")
+        EAN_input = st.text_input("Entrez un code EAN (8 ou 13 chiffres)")
+        buffer = None  # ✅ Initialise buffer à None pour éviter l’erreur
 
         if st.button("Générer le Code Barre"): 
             try:
-                # Cas valide → génération du code-barres
-                ean = EAN13(EAN_input, writer=ImageWriter())
+                # Vérifie la longueur du code pour choisir le bon format
+                if len(EAN_input) == 13:
+                    ean = EAN13(EAN_input, writer=ImageWriter())
+                elif len(EAN_input) == 8:
+                    ean = EAN8(EAN_input, writer=ImageWriter())
+                else:
+                    st.error("Le code EAN doit contenir 8 ou 13 chiffres.")
+                    ean = None
 
-                buffer = BytesIO()
-                ean.write(buffer)
-                buffer.seek(0)
+                if ean:
+                    buffer = BytesIO()
+                    ean.write(buffer)
+                    buffer.seek(0)
 
-                st.image(buffer, caption=f"Code barre du EAN {EAN_input}", use_container_width=True)
+                    st.image(buffer, caption=f"Code-barres EAN {EAN_input}", use_container_width=True)
 
             except Exception as e:
-                # Ici on intercepte toute autre erreur
-                st.error("Une erreur est survenue lors de la génération du code barre.")
+                st.error(f"Erreur lors de la génération du code-barres : {e}")
 
-            # Boutons pour téléchargement et effacer
+        # N’affiche les boutons que si buffer a bien été généré
+        if buffer:
             col1, col2 = st.columns(2)
             with col1:
-                    st.download_button(
-                    label="Télécharger le code barre",
+                st.download_button(
+                    label="Télécharger le code-barres",
                     data=buffer,
                     file_name=f"Code_barre_{EAN_input}.png",
                     mime="image/png"
-                    )
+                )
             with col2:
-                    if st.button("Effacer le code barre"):
-                            st.experimental_rerun()
+                if st.button("Effacer le code-barres"):
+                    st.experimental_rerun()
 
 
 
@@ -415,27 +424,63 @@ def Analyse_stock():
     st.set_page_config(layout="wide")
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
-    # --- Charger les fichiers depuis le cache (OneDrive) ---
-    onedrive_cache_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
-    data_dir = onedrive_cache_dir
+    # === 🔑 Ton token Dropbox ===
+    ACCESS_TOKEN = st.secrets["dropbox"]["access_token"]
+    DBX = dropbox.Dropbox(ACCESS_TOKEN)
+    DROPBOX_CACHE_DIR = "/Data_app/Cache"
 
-    if not data_dir.exists():
-        st.error(f"Le dossier cache OneDrive est introuvable : {data_dir}")
-        return
+    # --- Fonction utilitaire pour lire un fichier Parquet depuis Dropbox ---
+    def read_parquet_from_dropbox(filename):
+        path = f"{DROPBOX_CACHE_DIR}/{filename}"
+        try:
+            _, res = DBX.files_download(path)
+            return pd.read_parquet(BytesIO(res.content))
+        except Exception as e:
+            st.error(f"Erreur lors du chargement de {filename} depuis Dropbox : {e}")
+            return pd.DataFrame()
 
+    # --- Fonction utilitaire pour lire un fichier texte depuis Dropbox ---
+    def read_text_from_dropbox(filename):
+        path = f"{DROPBOX_CACHE_DIR}/{filename}"
+        try:
+            _, res = DBX.files_download(path)
+            return res.content.decode("utf-8").strip()
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture de {filename} depuis Dropbox : {e}")
+            return None
+
+    # === 🗂️ Chargement des fichiers Parquet ===
+    st.info("🔄 Chargement des données depuis Dropbox ...")
 
     try:
-        df_article_euros = pd.read_parquet(data_dir / "article_euros.parquet")
-        df_inventaire = pd.read_parquet(data_dir / "inventaire.parquet")
-        df_mvt_stock = pd.read_parquet(data_dir / "mvt_stock.parquet")
-        df_reception = pd.read_parquet(data_dir / "reception.parquet")
-        df_sorties = pd.read_parquet(data_dir / "sorties.parquet")
-        df_ecart_stock_prev = pd.read_parquet(data_dir / "ecart_stock_prev.parquet")
-        df_ecart_stock_last = pd.read_parquet(data_dir / "ecart_stock_last.parquet")
+        df_article_euros = read_parquet_from_dropbox("article_euros.parquet")
+        df_inventaire = read_parquet_from_dropbox("inventaire.parquet")
+        df_mvt_stock = read_parquet_from_dropbox("mvt_stock.parquet")
+        df_reception = read_parquet_from_dropbox("reception.parquet")
+        df_sorties = read_parquet_from_dropbox("sorties.parquet")
+        df_ecart_stock_prev = read_parquet_from_dropbox("ecart_stock_prev.parquet")
+        df_ecart_stock_last = read_parquet_from_dropbox("ecart_stock_last.parquet")
 
     except Exception as e:
-        st.error(f"Erreur lors du chargement du cache : {e}")
-        return
+        st.error(f"❌ Erreur lors du chargement des fichiers Dropbox : {e}")
+        st.stop()
+
+    st.success("✅ Données chargées depuis Dropbox avec succès !")
+
+    # === Lecture du chemin du dernier fichier Parquet (file_last.txt) ===
+    file_last = read_text_from_dropbox("file_last.txt")
+
+    if not file_last:
+        st.warning("Aucun fichier d'écart stock récent trouvé dans Dropbox (file_last non défini).")
+        st.stop()
+
+    # === Chargement du dernier parquet ===
+    parquet_name = Path(file_last).name  # on garde juste le nom du fichier
+    df_existing = read_parquet_from_dropbox(parquet_name)
+
+    if df_existing.empty:
+        st.warning(f"⚠️ Fichier parquet vide ou introuvable : {parquet_name}")
+        st.stop()
 
     # 🔧 Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
     for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
@@ -648,88 +693,12 @@ def Analyse_stock():
     # separation :
     st.divider()
 
-    # --- Lecture du chemin du dernier fichier parquet ---
-    onedrive_cache_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
-    file_last_txt = onedrive_cache_dir / "file_last.txt"
-
-
-    file_last = None
-    if file_last_txt.exists():
-        with open(file_last_txt, "r", encoding="utf-8") as f:
-            file_last = f.read().strip()
-
-    if not file_last:
-        st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
-        st.stop()
-
-    # --- Chargement du dernier parquet ---
-    parquet_path = Path(file_last).with_suffix(".parquet")
-    if not parquet_path.exists():
-        st.warning(f"Fichier parquet introuvable : {parquet_path}")
-        st.stop()
-
-    # --- Initialisation de la session Streamlit ---
-    if "df_comments" not in st.session_state:
-        df_existing = pd.read_parquet(parquet_path)
-
-        # S'assurer qu'on a bien la colonne MGB_6
-        if "MGB_6" not in df_existing.columns:
-            if "Article number (MGB)" in df_existing.columns:
-                df_existing["MGB_6"] = df_existing["Article number (MGB)"].astype(str)
-                df_existing = df_existing.drop(columns=["Article number (MGB)"])
-            else:
-                df_existing["MGB_6"] = ""
-
-        # Ajouter les colonnes de commentaire si elles n'existent pas
-        for col in ["Commentaire", "Date_Dernier_Commentaire"]:
-            if col not in df_existing.columns:
-                df_existing[col] = ""
-
-        st.session_state.df_comments = df_existing.copy()
-    
-        # --- Injection automatique des MGB de consigne dans df_comments ---
-
-        # Copie du DataFrame de commentaires existant
-        df_comments = st.session_state.df_comments.copy()
-        df_comments["MGB_6"] = df_comments["MGB_6"].astype(str)
-
-        # On s’appuie maintenant sur df_affiche (fichier des écarts)
-        df_ecart_stock_last["MGB_6"] = df_ecart_stock_last["MGB_6"].astype(str)
-
-        # On garde uniquement les MGB de consigne présents dans df_affiche
-        df_consigne = df_ecart_stock_last[df_ecart_stock_last["MGB_6"].isin(MGB_consigne)].copy()
-
-        # Colonnes nécessaires
-        for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
-            if col not in df_consigne.columns:
-                df_consigne[col] = ""
-
-        # Définir les valeurs de consigne
-        today = datetime.today().strftime("%d-%m-%Y")
-        df_consigne["Commentaire"] = "Consigne"
-        df_consigne["Date_Dernier_Commentaire"] = today
-        df_consigne["Choix_traitement"] = "XX"
-
-        # --- Appliquer ou ajouter les lignes correspondantes ---
-        for _, row in df_consigne.iterrows():
-            mgb = row["MGB_6"]
-
-            # Si le MGB existe déjà dans df_comments → mise à jour
-            if mgb in df_comments["MGB_6"].values:
-                df_comments.loc[df_comments["MGB_6"] == mgb, 
-                    ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]] = [
-                        "Consigne", today, "XX"
-                    ]
-            # Sinon → ajout d'une nouvelle ligne
-            else:
-                df_comments = pd.concat([df_comments, pd.DataFrame([row])], ignore_index=True)
-
-        # Sauvegarde et mise à jour de la session
-        st.session_state.df_comments = df_comments
-        df_comments.to_parquet(parquet_path, index=False)
-
-        st.info(f"{len(df_consigne)} lignes 'Consigne' mises à jour ou ajoutées (présentes dans df_affiche) ✅")
-
+    def save_parquet_to_dropbox(df, filename):
+        path = f"{DROPBOX_CACHE_DIR}/{filename}"
+        buffer = BytesIO()
+        df.to_parquet(buffer, index=False)
+        buffer.seek(0)
+        DBX.files_upload(buffer.read(), path, mode=dropbox.files.WriteMode("overwrite"))
 
 
     # --- Zone d’ajout/modification de commentaire ---
@@ -784,7 +753,7 @@ def Analyse_stock():
             df_temp.at[index, "Date_Dernier_Commentaire"] = today
             df_temp.at[index, "Choix_traitement"] = choix_source
             st.session_state.df_comments = df_temp
-            df_temp.to_parquet(parquet_path, index=False)
+            save_parquet_to_dropbox(df_temp, parquet_name)
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
@@ -807,7 +776,7 @@ def Analyse_stock():
                 df_temp.at[index, "Date_Dernier_Commentaire"] = today
                 df_temp.at[index, "Choix_traitement"] = choix_source
                 st.session_state.df_comments = df_temp
-                df_temp.to_parquet(parquet_path, index=False)
+                save_parquet_to_dropbox(df_temp, parquet_name)
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
     # --------------------------
@@ -918,6 +887,12 @@ def Analyse_stock():
             errors="coerce"
         ).fillna(0).sum()
 
+        # Nouvelles lignes (Deja_Present == False)
+        if "Deja_Present" in df_affiche.columns:
+            nb_nouvelles = (df_affiche["Deja_Present"] == False).sum()
+        else:
+            nb_nouvelles = 0
+
         # --- 1ere page = Page de synthèse ---
         pdf.add_page()
         pdf.set_font("Arial", "B", 14)
@@ -927,31 +902,61 @@ def Analyse_stock():
         pdf.set_font("Arial", "", 10)
 
         synthese_data = [            
-            ("Lignes METRO", str(nb_metro), f"{val_metro:,.2f} EUR"),
-            ("Lignes IDL", str(nb_idl), f"{val_idl:,.2f} EUR"),
-            ("Lignes non traitées", str(nb_non), f"{val_non:,.2f} EUR"),
-            ("Total écarts (hors consignes)", str(total_lignes), f"{total_valeur:,.2f} EUR"),
+            ("Lignes METRO", str(nb_metro)),
+            ("Lignes IDL", str(nb_idl)),
+            ("Lignes non traitées", str(nb_non)),
+            ("Total écarts (hors consignes)", str(total_lignes)),
+            ("Dont nouvelles lignes", str(nb_nouvelles)),
 
         ]
 
-        col_widths_syn = [90, 40, 60]
+        col_widths_syn = [110, 40]
         pdf.set_fill_color(220, 220, 220)
         pdf.cell(col_widths_syn[0], 8, "Catégorie", border=1, align="C", fill=True)
         pdf.cell(col_widths_syn[1], 8, "Nombre", border=1, align="C", fill=True)
-        pdf.cell(col_widths_syn[2], 8, "Valeur Totale", border=1, align="C", fill=True)
         pdf.ln()
 
         pdf.set_font("Arial", "", 9)
         for row in synthese_data:
             pdf.cell(col_widths_syn[0], 8, row[0], border=1)
             pdf.cell(col_widths_syn[1], 8, row[1], border=1, align="C")
-            pdf.cell(col_widths_syn[2], 8, row[2], border=1, align="R")
             pdf.ln()
 
         pdf.ln(10)
         pdf.set_font("Arial", "I", 9)
         pdf.cell(0, 6, "Les lignes non traitées ne figurent pas dans le rapport détaillé.", ln=True)
 
+        # Lignes supprimées (disparues)
+      
+        if "df_ecart_stock_prev" in st.session_state:
+            df_prev = st.session_state.df_ecart_stock_prev
+            df_curr = st.session_state.df_affiche
+
+            disappeared = df_prev[~df_prev["MGB_6"].isin(df_curr["MGB_6"])].copy()
+            if not disappeared.empty:
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 8, "Lignes disparues par rapport au précédent écart", ln=True)
+                pdf.ln(4)
+
+                df_disp_metro = disappeared[disappeared["Choix_traitement"] == "METRO"]
+                df_disp_idl = disappeared[disappeared["Choix_traitement"] == "IDL"]
+
+                pdf.set_font("Arial", "B", 10)
+                pdf.cell(0, 6, f"Traitement METRO : {len(df_disp_metro)} ligne(s)", ln=True)
+                pdf.set_font("Arial", "", 9)
+                for _, row in df_disp_metro.iterrows():
+                    pdf.cell(0, 6, f"- {row['MGB_6']} | {row.get('Désignation', '')}", ln=True)
+
+                pdf.ln(3)
+                pdf.set_font("Arial", "B", 10)
+                pdf.cell(0, 6, f"Traitement IDL : {len(df_disp_idl)} ligne(s)", ln=True)
+                pdf.set_font("Arial", "", 9)
+                for _, row in df_disp_idl.iterrows():
+                    pdf.cell(0, 6, f"- {row['MGB_6']} | {row.get('Désignation', '')}", ln=True)
+            else:
+                pdf.cell(0, 6, "Aucune ligne supprimée depuis le dernier écart.", ln=True)
+        else:
+            pdf.cell(0, 6, "⚠️ Données du précédent écart non disponibles.", ln=True)
 
 
         pdf.first_page = False  # Les pages suivantes auront les en-têtes
@@ -1026,7 +1031,7 @@ def main():
     if IMAGE_PATH_1.exists():
         st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
     else:
-        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_1}")
+        st.sidebar.warning(f"Image non trouvée : {IMAGE_PATH_1}")
 
     st.sidebar.header("Navigation")
     selected_tab = st.sidebar.radio("", list(tabs.keys()))
@@ -1035,7 +1040,7 @@ def main():
     if IMAGE_PATH_2.exists():
         st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
     else:
-        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_2}")
+        st.sidebar.warning(f"Image non trouvée : {IMAGE_PATH_2}")
 
      # --- Bouton actualiser ---
     if st.sidebar.button("Actualiser les données"):
@@ -1049,9 +1054,9 @@ def main():
                     text=True
                 )
                 if result.returncode == 0:
-                    st.sidebar.success("✅ Actualisation terminée avec succès !")
+                    st.sidebar.success("Actualisation terminée avec succès !")
                 else:
-                    st.sidebar.error(f"⚠️ Erreur lors de l’exécution :\n{result.stderr}")
+                    st.sidebar.error(f"Erreur lors de l’exécution :\n{result.stderr}")
             except Exception as e:
                 st.sidebar.error(f"Erreur : {e}")
 

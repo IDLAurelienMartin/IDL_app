@@ -1,0 +1,9 @@
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Cache et fichiers temporaires
+__pycache__/
+*.pyc
+.cache/
+Data_app/
+Cache/
