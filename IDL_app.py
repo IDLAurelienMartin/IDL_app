@@ -425,7 +425,7 @@ def Analyse_stock():
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
     # === 🔑 Ton token Dropbox ===
-    ACCESS_TOKEN = st.secrets["dropbox"]["access_token"]
+    ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
     DBX = dropbox.Dropbox(ACCESS_TOKEN)
     DROPBOX_CACHE_DIR = "/Data_app/Cache"
 
