@@ -12,7 +12,9 @@ import re
 # -------------------------
 # Token Dropbox
 # -------------------------
-ACCESS_TOKEN = st.secrets["dropbox"]["token"]
+ACCESS_TOKEN = os.environ.get("DROPBOX_TOKEN") or st.secrets.get("dropbox", {}).get("token")
+if not ACCESS_TOKEN:
+    raise ValueError("Dropbox token non défini !")
 dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
 

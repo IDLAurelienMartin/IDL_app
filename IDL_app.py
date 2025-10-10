@@ -19,10 +19,9 @@ import subprocess
 import dropbox
 
 # Récupérer le token Dropbox depuis l'environnement
-ACCESS_TOKEN = st.secrets["dropbox"]["token"]
+ACCESS_TOKEN = os.environ.get("DROPBOX_TOKEN") or st.secrets.get("dropbox", {}).get("token")
 if not ACCESS_TOKEN:
-    raise ValueError("Variable d'environnement DROPBOX_ACCESS_TOKEN non définie !")
-
+    raise ValueError("Dropbox token non défini !")
 dbx = dropbox.Dropbox(ACCESS_TOKEN)
     
 
@@ -432,9 +431,10 @@ def Analyse_stock():
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
     # === 🔑 Ton token Dropbox ===
-    ACCESS_TOKEN = st.secrets["dropbox"]["token"]
-    DBX = dropbox.Dropbox(ACCESS_TOKEN)
-    DROPBOX_CACHE_DIR = "/Data_app/Cache"
+    ACCESS_TOKEN = os.environ.get("DROPBOX_TOKEN") or st.secrets.get("dropbox", {}).get("token")
+    if not ACCESS_TOKEN:
+        raise ValueError("Dropbox token non défini !")
+    dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
     # --- Fonction utilitaire pour lire un fichier Parquet depuis Dropbox ---
     def read_parquet_from_dropbox(filename):
