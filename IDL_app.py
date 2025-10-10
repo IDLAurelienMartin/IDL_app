@@ -17,6 +17,13 @@ import io
 from datetime import datetime
 import subprocess
 import dropbox
+
+# Récupérer le token Dropbox depuis l'environnement
+ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+if not ACCESS_TOKEN:
+    raise ValueError("Variable d'environnement DROPBOX_ACCESS_TOKEN non définie !")
+
+dbx = dropbox.Dropbox(ACCESS_TOKEN)
     
 
 def tab_home():
@@ -1020,12 +1027,23 @@ tabs = {
 
 def main():
     
-    # Nouveau dossier de base : ton OneDrive
-    onedrive_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app")
+    # Fonction utilitaire pour charger une image depuis Dropbox
+    def load_image_dropbox(dbx, dropbox_path):
+        """
+        dbx : objet Dropbox
+        dropbox_path : chemin du fichier dans Dropbox (ex: "/Data_app/Images/logo_IDL.jpg")
+        """
+        _, res = dbx.files_download(dropbox_path)
+        return Image.open(BytesIO(res.content))
 
-    # Chemins des images dans ton OneDrive
-    IMAGE_PATH_1 = onedrive_dir / "Images" / "logo_IDL.jpg"
-    IMAGE_PATH_2 = onedrive_dir / "Images" / "Logo_Metro.webp"
+    # --- Chemins des images dans Dropbox ---
+    IMAGE_PATH_1_DBX = "/Data_app/Images/logo_IDL.jpg"
+    IMAGE_PATH_2_DBX = "/Data_app/Images/Logo_Metro.webp"
+
+    # --- Chargement des images ---
+    IMAGE_1 = load_image_dropbox(dbx, IMAGE_PATH_1_DBX)
+    IMAGE_2 = load_image_dropbox(dbx, IMAGE_PATH_2_DBX)
+
 
     # Vérification d’existence (pour éviter les erreurs Streamlit si un fichier manque)
     if IMAGE_PATH_1.exists():
