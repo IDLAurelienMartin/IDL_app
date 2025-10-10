@@ -19,7 +19,7 @@ import subprocess
 import dropbox
 
 # Récupérer le token Dropbox depuis l'environnement
-ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+ACCESS_TOKEN = st.secrets["dropbox"]["token"]
 if not ACCESS_TOKEN:
     raise ValueError("Variable d'environnement DROPBOX_ACCESS_TOKEN non définie !")
 
@@ -432,7 +432,7 @@ def Analyse_stock():
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
     # === 🔑 Ton token Dropbox ===
-    ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+    ACCESS_TOKEN = st.secrets["dropbox"]["token"]
     DBX = dropbox.Dropbox(ACCESS_TOKEN)
     DROPBOX_CACHE_DIR = "/Data_app/Cache"
 
@@ -1046,19 +1046,19 @@ def main():
 
 
     # Vérification d’existence (pour éviter les erreurs Streamlit si un fichier manque)
-    if IMAGE_PATH_1.exists():
-        st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
+    if IMAGE_1.exists():
+        st.sidebar.image(str(IMAGE_1), use_container_width=True)
     else:
-        st.sidebar.warning(f"Image non trouvée : {IMAGE_PATH_1}")
+        st.sidebar.warning(f"Image non trouvée : {IMAGE_1}")
 
     st.sidebar.header("Navigation")
     selected_tab = st.sidebar.radio("", list(tabs.keys()))
     tabs[selected_tab]()
 
-    if IMAGE_PATH_2.exists():
-        st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
+    if IMAGE_2.exists():
+        st.sidebar.image(str(IMAGE_2), use_container_width=True)
     else:
-        st.sidebar.warning(f"Image non trouvée : {IMAGE_PATH_2}")
+        st.sidebar.warning(f"Image non trouvée : {IMAGE_2}")
 
      # --- Bouton actualiser ---
     if st.sidebar.button("Actualiser les données"):

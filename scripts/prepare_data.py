@@ -67,7 +67,7 @@ def prepare_stock_data_dropbox():
             print(f"{name} est vide — non sauvegardé")
 
     # === 5️ Upload des fichiers traités vers Dropbox ===
-    ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+    ACCESS_TOKEN = st.secrets["dropbox"]["token"]
     dbx = dropbox.Dropbox(ACCESS_TOKEN)
     dropbox_output_dir = "/Data_app/Cache"
 

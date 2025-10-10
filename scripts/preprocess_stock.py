@@ -5,123 +5,91 @@ from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 import os
-import glob
+import streamlit as st
+import re
 
-# Récupérer le token Dropbox depuis l'environnement
-ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
-if not ACCESS_TOKEN:
-    raise ValueError("Variable d'environnement DROPBOX_ACCESS_TOKEN non définie !")
 
+# -------------------------
+# Token Dropbox
+# -------------------------
+ACCESS_TOKEN = st.secrets["dropbox"]["token"]
 dbx = dropbox.Dropbox(ACCESS_TOKEN)
 
+
+# -------------------------
 # Chemins Dropbox
+# -------------------------
 dropbox_base = "/Data_app"
-dropbox_mvt_stock = f"{dropbox_base}/Mvt_stock"
-dropbox_reception = f"{dropbox_base}/Historique_Reception"
-dropbox_sorties = f"{dropbox_base}/Historique_des_Sorties"
-dropbox_ecart_stock = f"{dropbox_base}/Ecart_Stock"
-dropbox_file_article = f"{dropbox_base}/Article_euros.xlsx"
-dropbox_file_inventaire = f"{dropbox_base}/Inventory_21_09_2025.xlsx"
+dropbox_paths = {
+"mvt_stock": f"{dropbox_base}/Mvt_stock",
+"reception": f"{dropbox_base}/Historique_Reception",
+"sorties": f"{dropbox_base}/Historique_des_Sorties",
+"ecart_stock": f"{dropbox_base}/Ecart_Stock",
+"article": f"{dropbox_base}/Article_euros.xlsx",
+"inventaire": f"{dropbox_base}/Inventory_21_09_2025.xlsx",
+"cache_parquet": f"{dropbox_base}/Cache/inventaire.parquet"
+}
 
-def list_files_dropbox(folder_path):
-    """Liste tous les fichiers .xlsx d’un dossier Dropbox (récursif)"""
-    files = []
+# -------------------------
+# Fonctions utilitaires
+# -------------------------
+def list_xlsx_dropbox(folder_path):
     try:
-        res = dbx.files_list_folder(folder_path, recursive=True)
-        for entry in res.entries:
-            if isinstance(entry, dropbox.files.FileMetadata) and entry.name.endswith(".xlsx"):
-                files.append(entry.path_lower)
-    except dropbox.exceptions.ApiError as e:
-        print(f"Erreur listing Dropbox {folder_path} : {e}")
-    return files
-
-def read_excel_dropbox(file_path):
-    """Télécharge un fichier Dropbox et le lit avec pandas"""
-    try:
-        _, res = dbx.files_download(file_path)
-        return pd.read_excel(BytesIO(res.content))
+        entries = dbx.files_list_folder(folder_path, recursive=True).entries
+        return [e.path_lower for e in entries if isinstance(e, dropbox.files.FileMetadata) and e.name.endswith(".xlsx")]
     except Exception as e:
-        print(f"Impossible de lire {file_path} depuis Dropbox : {e}")
-        return pd.DataFrame()
+        print(f"Erreur listage {folder_path} : {e}")
+        return []
 
-def load_data():
-    """
-    Charge toutes les données Excel depuis Dropbox.
-    Retourne les mêmes objets que l'ancien load_data().
-    """
 
-    # --- Fonction utilitaire pour lire Excel depuis Dropbox ---
-    def read_excel_from_dropbox(path):
+def read_excel_dropbox(path):
+    try:
         _, res = dbx.files_download(path)
         return pd.read_excel(BytesIO(res.content))
+    except Exception as e:
+        print(f"Impossible de lire {path} : {e}")
+        return pd.DataFrame()
 
-    # --- Dossiers / fichiers Dropbox ---
-    dossier_mvt_stock = f"{dropbox_base}/Mvt_stock"
-    dossier_reception = f"{dropbox_base}/Historique_Reception"
-    dossier_sorties = f"{dropbox_base}/Historique_des_Sorties"
-    dossier_ecart_stock = f"{dropbox_base}/Ecart_Stock"
-    file_article = f"{dropbox_base}/Article_euros.xlsx"
-    file_inventaire = f"{dropbox_base}/Inventory_21_09_2025.xlsx"
-    cache_dir = Path("Cache")
-    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Lecture du fichier inventaire pour date de référence ---
-    df_inventaire = read_excel_from_dropbox(file_inventaire)
-    date_ref = datetime.now()  # On peut utiliser date_modification Dropbox si nécessaire
+def remove_duplicate_columns(df):
+    if df is None or df.empty:
+        return df
+    return df.loc[:, ~df.columns.duplicated()]
 
-    # --- Lecture Excel par dossiers (simplifié, récursif à adapter si besoin) ---
-    def concat_excel_folder(dropbox_folder):
-        """
-        Télécharge tous les fichiers Excel du dossier Dropbox et concatène
-        """
-        try:
-            files = dbx.files_list_folder(dropbox_folder).entries
-        except dropbox.exceptions.ApiError:
-            return pd.DataFrame()
-        
+# -------------------------
+# Chargement des données
+# -------------------------
+def load_data():
+    df_inventaire = read_excel_dropbox(dropbox_paths["inventaire"])
+    df_article_euros = read_excel_dropbox(dropbox_paths["article"])
+
+
+    def concat_excel_folder(folder):
         dfs = []
-        for f in files:
-            if isinstance(f, dropbox.files.FileMetadata) and f.name.endswith(".xlsx"):
-                path = f"{dropbox_folder}/{f.name}"
-                dfs.append(read_excel_from_dropbox(path))
+        for f in list_xlsx_dropbox(folder):
+            dfs.append(read_excel_dropbox(f))
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-    df_mvt_stock = concat_excel_folder(dossier_mvt_stock)
-    df_reception = concat_excel_folder(dossier_reception)
-    df_sorties = concat_excel_folder(dossier_sorties)
 
-    # --- Cas spécial ECART STOCK ---
-    files_ecart = dbx.files_list_folder(dossier_ecart_stock).entries
-    files_ecart_xlsx = sorted([f for f in files_ecart if isinstance(f, dropbox.files.FileMetadata) and f.name.endswith(".xlsx")], key=lambda x: x.client_modified)
-    if len(files_ecart_xlsx) < 2:
-        raise FileNotFoundError("Pas assez de fichiers dans Ecart_Stock pour comparaison.")
-    file_prev, file_last_file = files_ecart_xlsx[-2], files_ecart_xlsx[-1]
-    df_ecart_stock_prev = read_excel_from_dropbox(file_prev.path_lower)
-    df_ecart_stock_last = read_excel_from_dropbox(file_last_file.path_lower)
+    df_mvt_stock = concat_excel_folder(dropbox_paths["mvt_stock"])
+    df_reception = concat_excel_folder(dropbox_paths["reception"])
+    df_sorties = concat_excel_folder(dropbox_paths["sorties"])
 
-    # --- Fichier articles ---
-    try:
-        df_article_euros = read_excel_from_dropbox(file_article)
-    except Exception:
-        df_article_euros = pd.DataFrame()
 
-    # --- Générer un nom unique pour le cache parquet ---
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_last = cache_dir / f"ecart_stock_last_{timestamp}.parquet"
+    # ECART STOCK
+    files_ecart = list_xlsx_dropbox(dropbox_paths["ecart_stock"])
+    if len(files_ecart) < 2:
+        raise FileNotFoundError("Pas assez de fichiers dans Ecart_Stock")
+    files_ecart_meta = sorted([dbx.files_get_metadata(f) for f in files_ecart], key=lambda x: x.client_modified)
+    df_ecart_stock_prev = read_excel_dropbox(files_ecart_meta[-2].path_lower)
+    df_ecart_stock_last = read_excel_dropbox(files_ecart_meta[-1].path_lower)
 
-    print(f"Fichiers chargés : Mvt_stock={len(df_mvt_stock)}, Réception={len(df_reception)}, Sorties={len(df_sorties)}, ECART={len(df_ecart_stock_last)}, Article={len(df_article_euros)}, Inventaire={len(df_inventaire)}")
-    print(f"Cache parquet prévu : {file_last}")
 
-    return (
-        df_mvt_stock,
-        df_reception,
-        df_sorties,
-        df_inventaire,
-        df_ecart_stock_prev,
-        df_ecart_stock_last,
-        df_article_euros,
-        file_last,
-    )
+    print(f"Chargé : Mvt={len(df_mvt_stock)}, Réception={len(df_reception)}, Sorties={len(df_sorties)}, ECART={len(df_ecart_stock_last)}, Article={len(df_article_euros)}, Inventaire={len(df_inventaire)}")
+
+
+    return df_mvt_stock, df_reception, df_sorties, df_inventaire, df_ecart_stock_prev, df_ecart_stock_last, df_article_euros
+
 
 def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock):  
 
@@ -355,13 +323,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         ]
         df_sorties = df_sorties[nouvel_ordre_s]
 
-        # --- ARTICLES €---
-        # --- Nettoyage robuste du fichier Article_€.xlsx ---
-        # (à placer juste après df_article_euros = pd.read_excel(file_article) ou
-        # si df_article_euros est déjà lu plus haut)
-
-        import re
-
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
             print("df_article_euros vide ou non trouvé.")
@@ -538,66 +499,35 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         # ============================================================
         # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
-        
-        ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
-        dbx = dropbox.Dropbox(ACCESS_TOKEN)
-
-        dropbox_path = "/Data_app/Cache/inventaire.parquet"
-
         try:
-            _, res = dbx.files_download(dropbox_path)
+            _, res = dbx.files_download(dropbox_paths["cache_parquet"])
             df_old = pd.read_parquet(BytesIO(res.content))
-            print("Fichier parquet téléchargé depuis Dropbox.")
-        except Exception as e:
-            print(f"Erreur téléchargement Dropbox : {e}")
-            df_old = pd.DataFrame()  # éviter NameError plus tard
-
-
-        if not df_old.empty:
-            expected = {"MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"}
-
-            if expected.issubset(set(df_old.columns)):
-                print("Fusion des anciens commentaires et choix traitement avec les nouvelles données...")
-
-                # --- s'assurer qu'il n'y a pas de doublons côté ancien fichier (garder le dernier) ---
-                if df_old["MGB_6"].duplicated().any():
-                    print(f"{df_old['MGB_6'].duplicated().sum()} doublons trouvés dans df_old -> on garde la dernière occurrence.")
-                    df_old = df_old.sort_values("Date_Dernier_Commentaire", ascending=True).drop_duplicates(subset="MGB_6", keep="last")
-
-                # --- fusionner (suffixe _old) ---
+            if not df_old.empty and {"MGB_6","Commentaire","Date_Dernier_Commentaire","Choix_traitement"}.issubset(df_old.columns):
+                df_old = df_old.sort_values("Date_Dernier_Commentaire", ascending=True).drop_duplicates("MGB_6", keep="last")
                 df_ecart_stock_last = df_ecart_stock_last.merge(
-                    df_old[["MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]],
-                    on="MGB_6",
-                    how="left",
-                    suffixes=("", "_old")
+                df_old[["MGB_6","Commentaire","Date_Dernier_Commentaire","Choix_traitement"]],
+                on="MGB_6", how="left", suffixes=("","_old")
                 )
-
-                # --- normaliser les noms de colonnes (strip) ---
-                df_ecart_stock_last.columns = [c.strip() if isinstance(c, str) else c for c in df_ecart_stock_last.columns]
-
-                # --- pour chaque colonne cible, remplacer les valeurs NULL ou "" par la valeur _old ---
-                for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
+                for col in ["Commentaire","Date_Dernier_Commentaire","Choix_traitement"]:
                     old_col = f"{col}_old"
                     if old_col in df_ecart_stock_last.columns:
-                        mask_missing = df_ecart_stock_last[col].isnull() | (df_ecart_stock_last[col].astype(str).str.strip() == "")
-                        n_to_fill = mask_missing.sum()
-                        if n_to_fill:
-                            print(f"Remplissage de {n_to_fill} valeurs manquantes dans '{col}' depuis '{old_col}'.")
-                            df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
-                    else:
-                        print(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
+                        mask = df_ecart_stock_last[col].isnull() | (df_ecart_stock_last[col].astype(str).str.strip()=="")
+                        df_ecart_stock_last.loc[mask,col] = df_ecart_stock_last.loc[mask,old_col]
+            df_ecart_stock_last.drop(columns=[c for c in df_ecart_stock_last.columns if c.endswith("_old")], inplace=True)
+        except Exception:
+            print("Aucun parquet précédent ou erreur lecture, fusion ignorée.")
 
-                # --- supprimer toutes les colonnes finissant par _old ---
-                old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
-                if old_cols:
-                    print(f"🧹 Suppression des colonnes temporaires : {old_cols}")
-                    df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
-                else:
-                    print("Aucune colonne *_old à supprimer.")
 
-            else:
-                print("Le parquet existant ne contient pas toutes les colonnes attendues :", expected - set(df_old.columns))
-        else:
-            print("ℹAucun ancien parquet à fusionner — création initiale du fichier.")
+        # -----------------------------
+        # Supprimer colonnes dupliquées
+        # -----------------------------
+        df_ecart_stock_prev = remove_duplicate_columns(df_ecart_stock_prev)
+        df_ecart_stock_last = remove_duplicate_columns(df_ecart_stock_last)
+        df_mvt_stock = remove_duplicate_columns(df_mvt_stock)
+        df_reception = remove_duplicate_columns(df_reception)
+        df_sorties = remove_duplicate_columns(df_sorties)
+        df_inventaire = remove_duplicate_columns(df_inventaire)
+        df_article_euros = remove_duplicate_columns(df_article_euros)
+
 
         return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock
