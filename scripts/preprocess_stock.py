@@ -7,96 +7,110 @@ from pathlib import Path
 import os
 import glob
 
-# === Correction SSL pour Dropbox (certifi + proxy entreprise) ===
-import ssl, certifi
+# Récupérer le token Dropbox depuis l'environnement
+ACCESS_TOKEN = os.environ.get("DROPBOX_ACCESS_TOKEN")
+if not ACCESS_TOKEN:
+    raise ValueError("Variable d'environnement DROPBOX_ACCESS_TOKEN non définie !")
 
-try:
-    # Forcer l'utilisation du certificat certifi pour toutes les connexions HTTPS
-    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
-except Exception as e:
-    print(f"⚠️ Impossible d'appliquer le contexte SSL certifi : {e}")
+dbx = dropbox.Dropbox(ACCESS_TOKEN)
+
+# Chemins Dropbox
+dropbox_base = "/Data_app"
+dropbox_mvt_stock = f"{dropbox_base}/Mvt_stock"
+dropbox_reception = f"{dropbox_base}/Historique_Reception"
+dropbox_sorties = f"{dropbox_base}/Historique_des_Sorties"
+dropbox_ecart_stock = f"{dropbox_base}/Ecart_Stock"
+dropbox_file_article = f"{dropbox_base}/Article_euros.xlsx"
+dropbox_file_inventaire = f"{dropbox_base}/Inventory_21_09_2025.xlsx"
+
+def list_files_dropbox(folder_path):
+    """Liste tous les fichiers .xlsx d’un dossier Dropbox (récursif)"""
+    files = []
+    try:
+        res = dbx.files_list_folder(folder_path, recursive=True)
+        for entry in res.entries:
+            if isinstance(entry, dropbox.files.FileMetadata) and entry.name.endswith(".xlsx"):
+                files.append(entry.path_lower)
+    except dropbox.exceptions.ApiError as e:
+        print(f"Erreur listing Dropbox {folder_path} : {e}")
+    return files
+
+def read_excel_dropbox(file_path):
+    """Télécharge un fichier Dropbox et le lit avec pandas"""
+    try:
+        _, res = dbx.files_download(file_path)
+        return pd.read_excel(BytesIO(res.content))
+    except Exception as e:
+        print(f"Impossible de lire {file_path} depuis Dropbox : {e}")
+        return pd.DataFrame()
 
 def load_data():
     """
-    Charge toutes les données Excel depuis OneDrive.
-    Ne conserve que les fichiers postérieurs à la date de l'inventaire.
+    Charge toutes les données Excel depuis Dropbox.
+    Retourne les mêmes objets que l'ancien load_data().
     """
 
-    # === Dossiers OneDrive ===
-    onedrive_base = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app")
-    dossier_mvt_stock = onedrive_base / "Mvt_stock"
-    dossier_reception = onedrive_base / "Historique_Reception"
-    dossier_sorties = onedrive_base / "Historique_des_Sorties"
-    dossier_ecart_stock = onedrive_base / "Ecart_Stock"
-    file_article = onedrive_base / "Article_euros.xlsx"
-    file_inventaire = onedrive_base / "Inventory_21_09_2025.xlsx"
-    cache_dir = onedrive_base / "Cache"
+    # --- Fonction utilitaire pour lire Excel depuis Dropbox ---
+    def read_excel_from_dropbox(path):
+        _, res = dbx.files_download(path)
+        return pd.read_excel(BytesIO(res.content))
 
+    # --- Dossiers / fichiers Dropbox ---
+    dossier_mvt_stock = f"{dropbox_base}/Mvt_stock"
+    dossier_reception = f"{dropbox_base}/Historique_Reception"
+    dossier_sorties = f"{dropbox_base}/Historique_des_Sorties"
+    dossier_ecart_stock = f"{dropbox_base}/Ecart_Stock"
+    file_article = f"{dropbox_base}/Article_euros.xlsx"
+    file_inventaire = f"{dropbox_base}/Inventory_21_09_2025.xlsx"
+    cache_dir = Path("Cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # === Lecture de la date de référence (fichier inventaire) ===
-    if not file_inventaire.exists():
-        raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
-    date_ref = datetime.fromtimestamp(file_inventaire.stat().st_mtime)
-    print(f"Seuls les fichiers modifiés après {date_ref.strftime('%d/%m/%Y %H:%M')} seront chargés.")
+    # --- Lecture du fichier inventaire pour date de référence ---
+    df_inventaire = read_excel_from_dropbox(file_inventaire)
+    date_ref = datetime.now()  # On peut utiliser date_modification Dropbox si nécessaire
 
-    # === Fonction de concaténation filtrée et récursive ===
-    def concat_excel_from_folder(folder):
+    # --- Lecture Excel par dossiers (simplifié, récursif à adapter si besoin) ---
+    def concat_excel_folder(dropbox_folder):
         """
-        Charge tous les fichiers Excel récents depuis un dossier et ses sous-dossiers.
-        Ne garde que ceux plus récents que le fichier d'inventaire.
+        Télécharge tous les fichiers Excel du dossier Dropbox et concatène
         """
-        if not folder.exists():
-            print(f"⚠️ Dossier introuvable : {folder}")
+        try:
+            files = dbx.files_list_folder(dropbox_folder).entries
+        except dropbox.exceptions.ApiError:
             return pd.DataFrame()
+        
+        dfs = []
+        for f in files:
+            if isinstance(f, dropbox.files.FileMetadata) and f.name.endswith(".xlsx"):
+                path = f"{dropbox_folder}/{f.name}"
+                dfs.append(read_excel_from_dropbox(path))
+        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-        # Recherche dans tous les sous-dossiers
-        fichiers = [
-            Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
-            if Path(f).stat().st_mtime > file_inventaire.stat().st_mtime
-        ]
+    df_mvt_stock = concat_excel_folder(dossier_mvt_stock)
+    df_reception = concat_excel_folder(dossier_reception)
+    df_sorties = concat_excel_folder(dossier_sorties)
 
-        print(f"{len(fichiers)} fichier(s) récents trouvés (y compris sous-dossiers) dans {folder}")
+    # --- Cas spécial ECART STOCK ---
+    files_ecart = dbx.files_list_folder(dossier_ecart_stock).entries
+    files_ecart_xlsx = sorted([f for f in files_ecart if isinstance(f, dropbox.files.FileMetadata) and f.name.endswith(".xlsx")], key=lambda x: x.client_modified)
+    if len(files_ecart_xlsx) < 2:
+        raise FileNotFoundError("Pas assez de fichiers dans Ecart_Stock pour comparaison.")
+    file_prev, file_last_file = files_ecart_xlsx[-2], files_ecart_xlsx[-1]
+    df_ecart_stock_prev = read_excel_from_dropbox(file_prev.path_lower)
+    df_ecart_stock_last = read_excel_from_dropbox(file_last_file.path_lower)
 
-        if not fichiers:
-            return pd.DataFrame()
+    # --- Fichier articles ---
+    try:
+        df_article_euros = read_excel_from_dropbox(file_article)
+    except Exception:
+        df_article_euros = pd.DataFrame()
 
-        # Concatène les fichiers Excel trouvés
-        return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
+    # --- Générer un nom unique pour le cache parquet ---
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_last = cache_dir / f"ecart_stock_last_{timestamp}.parquet"
 
-
-    # === Chargement des datasets ===
-    df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock)
-    df_reception = concat_excel_from_folder(dossier_reception)
-    df_sorties = concat_excel_from_folder(dossier_sorties)
-
-    # === Cas spécial : ECART STOCK ===
-    files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
-    if len(files) < 2:
-        raise FileNotFoundError(f"Pas assez de fichiers dans {dossier_ecart_stock} pour comparaison.")
-    file_prev, file_last = files[-2], files[-1]
-
-    df_ecart_stock_prev = pd.read_excel(file_prev)
-    df_ecart_stock_last = pd.read_excel(file_last)
-
-    # === Fichiers de référence ===
-    df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
-    df_inventaire = pd.read_excel(file_inventaire)
-
-    # === Gestion du cache ===
-    file_last_parquet = cache_dir / "ecart_stock_last.parquet"
-    file_last_txt = cache_dir / "file_last.txt"
-
-    with open(file_last_txt, "w", encoding="utf-8") as f:
-        f.write(str(file_last_parquet).replace("\\", "/"))
-
-    print(f"\n=== SYNTHÈSE DU CHARGEMENT ===")
-    print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
-    print(f"Réception : {len(df_reception)} lignes")
-    print(f"Sorties   : {len(df_sorties)} lignes")
-    print(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
-    print(f"Article_euros : {len(df_article_euros)} lignes")
-    print(f"Inventaire : {len(df_inventaire)} lignes")
+    print(f"Fichiers chargés : Mvt_stock={len(df_mvt_stock)}, Réception={len(df_reception)}, Sorties={len(df_sorties)}, ECART={len(df_ecart_stock_last)}, Article={len(df_article_euros)}, Inventaire={len(df_inventaire)}")
+    print(f"Cache parquet prévu : {file_last}")
 
     return (
         df_mvt_stock,
