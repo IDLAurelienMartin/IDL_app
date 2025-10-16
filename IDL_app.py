@@ -16,6 +16,7 @@ from fpdf import FPDF
 import io
 from datetime import datetime
 import subprocess
+import pickle
 # scripts/stock_analysis_drive.py
 from scripts.preprocess_stock import load_data, preprocess_data  
 from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
@@ -29,10 +30,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
 # === Initialisation Google Drive (OAuth 2 Service Account) ===
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-SERVICE_ACCOUNT_INFO = os.environ.get("OOGLE_OAUTH_CREDENTIALS_JSON")  # JSON string du compte de service
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 TOKEN_FILE = "token.json" 
 
 def tab_home():
@@ -426,62 +427,67 @@ def tab_QR_Codes():
                             st.experimental_rerun()
 
 
-# === OAuth2 pour compte Google Drive gratuit ===
-SCOPES = ['https://www.googleapis.com/auth/drive']
-TOKEN_FILE = "token.json"  # où on stocke le token
-CLIENT_SECRETS_JSON = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_JSON")
-
-def get_drive_service():
-    # Récupérer le JSON depuis la variable d'environnement
-    service_json = os.environ.get("GOOGLE_SERVICE_JSON")
-    if not service_json:
-        raise ValueError("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie")
-
-    try:
-        credentials_info = json.loads(service_json)
-    except Exception as e:
-        raise ValueError(f"Impossible de parser GOOGLE_SERVICE_JSON : {e}")
-
-    # Créer les credentials Service Account
-    creds = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
-
-    # Construire le service Drive
-    drive_service = build('drive', 'v3', credentials=creds)
-    return drive_service
-
-# Utilisation
-drive_service = get_drive_service()
-
-
 # === Fonction utilitaires ===
 # === Fonction pour initialiser le service Google Drive ===
 def get_drive_service():
-    creds = None
+    """
+    Initialise Google Drive API.
+    - Priorité 1 : Service Account via GOOGLE_OAUTH_CREDENTIALS_JSON
+    - Priorité 2 : OAuth utilisateur via credentials.json et token.json
+    Fonction compatible : local & Render
+    """
 
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    else:
-        if not CLIENT_SECRETS_JSON:
-            st.error("La variable d'environnement GOOGLE_OAUTH_CREDENTIALS_JSON n'est pas définie.")
-            st.stop()
-        
-        # Sauvegarder le JSON OAuth temporairement
-        client_secret_path = "client_secrets.json"
-        with open(client_secret_path, "w") as f:
-            f.write(CLIENT_SECRETS_JSON)
-        
-        # Flux OAuth local
-        flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
-        creds = flow.run_local_server(port=0)
+    # --- Service Account ---
+    service_json = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_JSON")
+    if service_json:
+        try:
+            creds_info = json.loads(service_json)
+        except Exception as e:
+            raise ValueError(f"Impossible de parser GOOGLE_OAUTH_CREDENTIALS_JSON : {e}")
+        creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
+        service = build("drive", "v3", credentials=creds)
+        print("Connexion Google Drive avec Service Account réussie.")
+        return service
 
-        # Sauvegarder le token
-        with open(TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
-        st.success(f"Token généré et sauvegardé dans {TOKEN_FILE}")
+    # --- Fallback local OAuth utilisateur ---
+    local_credentials_path = "IDL_DB/credentials.json"
+    if os.path.exists(local_credentials_path):
+        creds = None
 
-    # Construire le service Drive
-    service = build('drive', 'v3', credentials=creds)
-    return service
+        # Vérifie si token existant
+        if os.path.exists(TOKEN_FILE):
+            with open(TOKEN_FILE, "rb") as token_file:
+                creds = pickle.load(token_file)
+
+        # Si pas de token valide, lancer le flow OAuth
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(local_credentials_path, SCOPES)
+
+                # ⚡ Détection environnement Render / Streamlit Cloud
+                if os.environ.get("RENDER") or os.environ.get("STREAMLIT_SERVER"):
+                    # Pas de navigateur dispo, on utilise le mode console
+                    creds = flow.run_console()
+                else:
+                    # Local avec navigateur
+                    creds = flow.run_local_server(port=8080)
+
+            # Sauvegarde automatique du token pour les prochaines exécutions
+            os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+            with open(TOKEN_FILE, "wb") as token_file:
+                pickle.dump(creds, token_file)
+
+        service = build("drive", "v3", credentials=creds)
+        print("Connexion Google Drive via OAuth utilisateur réussie.")
+        return service
+
+    # --- Aucun moyen de se connecter ---
+    raise ValueError(
+        "Aucun identifiant Google Drive trouvé. "
+        "Définir GOOGLE_OAUTH_CREDENTIALS_JSON ou créer 'IDL_DB/credentials.json'."
+    )
 
 # === Initialisation ===
 drive_service = get_drive_service()

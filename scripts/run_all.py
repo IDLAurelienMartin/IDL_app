@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 📁 Dossier de base du projet
+# Dossier de base du projet
 BASE_DIR = Path(__file__).resolve().parent
 PYTHON = sys.executable  # Python du venv actif
 

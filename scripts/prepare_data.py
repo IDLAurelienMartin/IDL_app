@@ -17,14 +17,28 @@ from googleapiclient.http import MediaFileUpload
 SCOPES = ['https://www.googleapis.com/auth/drive.file']  # accès uniquement aux fichiers créés par l'app
 
 def get_drive_service():
-    """Initialise Google Drive API avec service account via GOOGLE_SERVICE_JSON"""
-    service_json = os.environ.get("GOOGLE_SERVICE_JSON")
-    if not service_json:
-        raise ValueError("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie.")
+    """Initialise Google Drive API avec service account via GOOGLE_SERVICE_JSON ou fichier local"""
     
-    creds_info = json.loads(service_json)
-    creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-    service = build('drive', 'v3', credentials=creds)
+    service_json = os.environ.get("GOOGLE_SERVICE_JSON")
+    
+    if service_json:
+        # Variable d'environnement présente (ex : Render)
+        credentials_info = json.loads(service_json)
+    else:
+        # Sinon on cherche un fichier local
+        local_path = Path("IDL_DB/service_account.json")  # <-- modifie ce chemin si nécessaire
+        if not local_path.exists():
+            raise ValueError(
+                "La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie "
+                "et le fichier local n'existe pas."
+            )
+        with open(local_path, "r", encoding="utf-8") as f:
+            credentials_info = json.load(f)
+
+    credentials = service_account.Credentials.from_service_account_info(
+        credentials_info, scopes=SCOPES
+    )
+    service = build('drive', 'v3', credentials=credentials)
     return service
 
 # --------------------------
@@ -63,7 +77,7 @@ def prepare_stock_data_drive(drive_folder_id: str):
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
-        file_last_parquet
+        file_last_parquet,
     ) = load_data()  # adapte load_data si nécessaire pour OAuth2
 
     df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock = preprocess_data(
@@ -109,7 +123,15 @@ def prepare_stock_data_drive(drive_folder_id: str):
 
 
 if __name__ == "__main__":
+    # Priorité 1 : Render / environnement serveur
     DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_INPUT_FOLDER_ID")
-    if not DRIVE_FOLDER_ID:
-        raise ValueError("L'ID du dossier Google Drive INPUT_FOLDER_ID n'est pas défini.")
-    prepare_stock_data_drive(DRIVE_FOLDER_ID)
+
+    if DRIVE_FOLDER_ID:
+        # Utilisation de Google Drive via OAuth / token.json
+        print(f"Utilisation du dossier Google Drive : {DRIVE_FOLDER_ID}")
+        prepare_stock_data_drive(DRIVE_FOLDER_ID)
+    else:
+        # Fallback local
+        LOCAL_PATH = r"1RFdl9UjyeZioxDFkkK_g0DiZUGwMUA4O"
+        print(f"Aucun ID Drive défini, utilisation du dossier local : {LOCAL_PATH}")
+        prepare_stock_data_drive(LOCAL_PATH)
