@@ -32,10 +32,10 @@ from googleapiclient.discovery import build
 
 # === Initialisation Google Drive (OAuth 2 Service Account) ===
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-SERVICE_ACCOUNT_INFO = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # JSON string du compte de service
+SERVICE_ACCOUNT_INFO = os.environ.get("GOOGLE_SERVICE_JSON")  # JSON string du compte de service
 
 if not SERVICE_ACCOUNT_INFO:
-    st.error("La variable d'environnement GOOGLE_SERVICE_ACCOUNT_JSON n'est pas définie.")
+    st.error("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie.")
     st.stop()
 
 import json
