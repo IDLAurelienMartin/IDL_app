@@ -18,12 +18,25 @@ import tempfile
 # Connexion Google Drive
 # --------------------------
 service_json = os.environ.get("GOOGLE_SERVICE_JSON")
-if not service_json:
-    raise ValueError("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie.")
 
-credentials_info = json.loads(service_json)
+if service_json:
+    # On a la variable d'environnement (ex : Render)
+    credentials_info = json.loads(service_json)
+else:
+    # Sinon on cherche un fichier local
+    local_path = "IDL_DB\service_account.json"  # <-- modifie ce chemin
+    if not os.path.exists(local_path):
+        raise ValueError(
+            "La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie "
+            "et le fichier local n'existe pas."
+        )
+    with open(local_path, "r", encoding="utf-8") as f:
+        credentials_info = json.load(f)
+
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+credentials = service_account.Credentials.from_service_account_info(
+    credentials_info, scopes=SCOPES
+)
 drive_service = build('drive', 'v3', credentials=credentials)
 
 # --------------------------

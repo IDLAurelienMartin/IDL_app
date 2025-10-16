@@ -32,47 +32,8 @@ from googleapiclient.discovery import build
 
 # === Initialisation Google Drive (OAuth 2 Service Account) ===
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-SERVICE_ACCOUNT_INFO = os.environ.get("GOOGLE_SERVICE_JSON")  # JSON string du compte de service
-
-if not SERVICE_ACCOUNT_INFO:
-    st.error("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie.")
-    st.stop()
-
-import json
-creds = Credentials.from_service_account_info(json.loads(SERVICE_ACCOUNT_INFO), scopes=SCOPES)
-drive_service = build("drive", "v3", credentials=creds)
-
-def download_drive_file(service, file_name, dest_path):
-    """Télécharge un fichier Google Drive par son nom."""
-    try:
-        # Recherche du fichier sur Drive
-        results = service.files().list(
-            q=f"name = '{file_name}' and trashed = false",
-            spaces="drive",
-            fields="files(id, name)"
-        ).execute()
-        items = results.get("files", [])
-        if not items:
-            st.sidebar.warning(f"⚠️ Fichier non trouvé sur Drive : {file_name}")
-            return None
-        
-        file_id = items[0]["id"]
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-
-        # Sauvegarde temporaire du fichier
-        with open(dest_path, "wb") as f:
-            f.write(fh.read())
-        return dest_path
-
-    except Exception as e:
-        st.sidebar.error(f"❌ Erreur téléchargement {file_name} : {e}")
-        return None
+SERVICE_ACCOUNT_INFO = os.environ.get("OOGLE_OAUTH_CREDENTIALS_JSON")  # JSON string du compte de service
+TOKEN_FILE = "token.json" 
 
 def tab_home():
     st.title("Accueil")
@@ -493,6 +454,39 @@ drive_service = get_drive_service()
 
 
 # === Fonction utilitaires ===
+# === Fonction pour initialiser le service Google Drive ===
+def get_drive_service():
+    creds = None
+
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    else:
+        if not CLIENT_SECRETS_JSON:
+            st.error("La variable d'environnement GOOGLE_OAUTH_CREDENTIALS_JSON n'est pas définie.")
+            st.stop()
+        
+        # Sauvegarder le JSON OAuth temporairement
+        client_secret_path = "client_secrets.json"
+        with open(client_secret_path, "w") as f:
+            f.write(CLIENT_SECRETS_JSON)
+        
+        # Flux OAuth local
+        flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+        creds = flow.run_local_server(port=0)
+
+        # Sauvegarder le token
+        with open(TOKEN_FILE, "w") as token:
+            token.write(creds.to_json())
+        st.success(f"Token généré et sauvegardé dans {TOKEN_FILE}")
+
+    # Construire le service Drive
+    service = build('drive', 'v3', credentials=creds)
+    return service
+
+# === Initialisation ===
+drive_service = get_drive_service()
+
+# === Fonctions utilitaires Drive ===
 def get_file_id_by_name(service, name, folder_id=None):
     query = f"name = '{name}' and trashed = false"
     if folder_id:
@@ -502,8 +496,6 @@ def get_file_id_by_name(service, name, folder_id=None):
     return files[0]["id"] if files else None
 
 def download_parquet_from_drive(service, file_id):
-    from googleapiclient.http import MediaIoBaseDownload
-    import io
     request = service.files().get_media(fileId=file_id)
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
@@ -517,58 +509,54 @@ def download_parquet_from_drive(service, file_id):
     return tmp_file.name
 
 def upload_or_update_file(service, local_path, file_name, folder_id):
-    from googleapiclient.http import MediaFileUpload
     file_id = get_file_id_by_name(service, file_name, folder_id)
     media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
     if file_id:
-        # Update existant
         updated_file = service.files().update(fileId=file_id, media_body=media).execute()
         return updated_file["id"]
     else:
-        # Nouveau fichier
         file_metadata = {"name": file_name, "parents": [folder_id]}
         created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
         return created_file["id"]
-    
-# === Fonction principale ===
+
+def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
+    q = f"name contains '{name_contains}' and trashed = false"
+    if folder_id:
+        q += f" and '{folder_id}' in parents"
+    results = service.files().list(
+        q=q, orderBy="createdTime desc", pageSize=1,
+        fields="files(id, name, createdTime)"
+    ).execute()
+    files = results.get("files", [])
+    return files[0] if files else None
+
 # === Fonction principale ===
 def Analyse_stock():
     st.set_page_config(layout="wide")
     today = datetime.today().strftime("%d/%m/%Y")
 
-    from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
-
-    # === Dossier Drive d’entrée (My Drive) ===
+    # === Dossier Drive d’entrée ===
     drive_folder_id = os.environ.get("GOOGLE_DRIVE_INPUT_FOLDER_ID")
     if not drive_folder_id:
         st.error("La variable d'environnement GOOGLE_DRIVE_INPUT_FOLDER_ID n'est pas définie.")
         return
 
-    # --- Liste des fichiers parquet attendus ---
     expected_files = [
-        "article_euros.parquet",
-        "inventaire.parquet",
-        "mvt_stock.parquet",
-        "reception.parquet",
-        "sorties.parquet",
-        "ecart_stock_prev.parquet",
-        "ecart_stock_last.parquet",
+        "article_euros.parquet", "inventaire.parquet", "mvt_stock.parquet",
+        "reception.parquet", "sorties.parquet", "ecart_stock_prev.parquet",
+        "ecart_stock_last.parquet"
     ]
 
-    # --- Télécharger les fichiers ---
+    # Télécharger tous les fichiers attendus
     local_paths = {}
     for name in expected_files:
         file_id = get_file_id_by_name(drive_service, name, folder_id=drive_folder_id)
         if not file_id:
-            st.error(f"Fichier introuvable sur Google Drive : {name}")
+            st.error(f"Fichier introuvable sur Drive : {name}")
             return
-        local_path = download_parquet_from_drive(drive_service, file_id)
-        if not local_path:
-            st.error(f"Impossible de télécharger {name} depuis Drive.")
-            return
-        local_paths[name] = local_path
+        local_paths[name] = download_parquet_from_drive(drive_service, file_id)
 
-    # --- Lecture des fichiers ---
+    # --- Lecture des fichiers parquet ---
     df_article_euros = pd.read_parquet(local_paths["article_euros.parquet"])
     df_inventaire = pd.read_parquet(local_paths["inventaire.parquet"])
     df_mvt_stock = pd.read_parquet(local_paths["mvt_stock.parquet"])
@@ -577,21 +565,21 @@ def Analyse_stock():
     df_ecart_stock_prev = pd.read_parquet(local_paths["ecart_stock_prev.parquet"])
     df_ecart_stock_last = pd.read_parquet(local_paths["ecart_stock_last.parquet"])
 
-    # --- Harmoniser le format de MGB_6 ---
-    for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
+    # --- Harmoniser MGB_6 ---
+    for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception,
+               df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
         if "MGB_6" in df.columns:
             df["MGB_6"] = df["MGB_6"].astype(str).str.strip().str.replace(" ", "")
 
-
-    # --- Interface principale Streamlit ---
+    # --- Interface Streamlit ---
     st.title("Analyse des écarts de stock")
 
-    # 🔧 Préparation légère ou ajustements (si nécessaires)
+    # Mise à jour emplacement
     if not df_mvt_stock.empty:
         df_mvt_stock['Emplacement'] = df_mvt_stock.apply(update_emplacement, axis=1)
         df_mvt_stock = df_mvt_stock.drop(columns=['prefix_emplacement'], errors='ignore')
 
-    # --- Liste des MGB à traiter en "Consigne" (XX) ---
+    # Liste MGB consigne
     MGB_consigne = [
         "226796", "890080", "179986", "885177", "890050", "226923", "834397", "890070",
         "886655", "226725", "226819", "226681", "897881", "897885", "897890", "897698",
@@ -603,9 +591,6 @@ def Analyse_stock():
         "135181", "383779", "226802", "897816", "180720", "173902", "226840", "226889",
         "890060"
     ]
-
-    
-    # Afficher le tableau des écarts
 
     st.subheader("Tableau des écarts")
 
