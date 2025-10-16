@@ -1,3 +1,38 @@
+<<<<<<< HEAD
+# preprocess_stock.py
+import io
+import pandas as pd
+import sys
+import re
+from datetime import datetime
+from pathlib import Path
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+from openpyxl import load_workbook
+import json
+import tempfile
+
+
+# --------------------------
+# Connexion Google Drive
+# --------------------------
+service_json = os.environ.get("GOOGLE_SERVICE_JSON")
+if not service_json:
+    raise ValueError("La variable d'environnement GOOGLE_SERVICE_JSON n'est pas définie.")
+
+credentials_info = json.loads(service_json)
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
+drive_service = build('drive', 'v3', credentials=credentials)
+
+# --------------------------
+# Fonctions utilitaires Drive
+# --------------------------
+def download_file(service, file_id: str, file_type='excel') -> pd.DataFrame:
+    """Télécharge un fichier Excel ou Parquet depuis Drive et retourne un DataFrame."""
+    request = service.files().get_media(fileId=file_id)
+=======
 # scripts/preprocess_stock_drive.py
 import os
 import io
@@ -32,12 +67,34 @@ drive_service = build('drive', 'v3', credentials=credentials)
 def download_excel(file_id: str) -> pd.DataFrame:
     """Télécharge un fichier Excel depuis Google Drive et retourne un DataFrame."""
     request = drive_service.files().get_media(fileId=file_id)
+>>>>>>> c5fccbe (16/10  09h40)
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
     done = False
     while not done:
         _, done = downloader.next_chunk()
     fh.seek(0)
+<<<<<<< HEAD
+    
+    if file_type == 'excel':
+        return pd.read_excel(fh)
+    elif file_type == 'parquet':
+        return pd.read_parquet(fh)
+    else:
+        raise ValueError(f"Type de fichier non supporté : {file_type}")
+
+def list_files_in_folder(service, folder_id: str, mime_type=None):
+    """Liste tous les fichiers dans un dossier Drive, optionnellement filtré par type MIME."""
+    query = f"'{folder_id}' in parents and trashed = false"
+    if mime_type:
+        query += f" and mimeType='{mime_type}'"
+    results = service.files().list(q=query, fields="files(id, name, modifiedTime)").execute()
+    return results.get('files', [])
+
+# --------------------------
+# Chargement des fichiers
+# --------------------------
+=======
     return pd.read_excel(fh)
 
 def list_files_in_folder(folder_id: str):
@@ -65,6 +122,7 @@ def concat_excel_from_drive_folder(folder_id: str, date_ref: datetime) -> pd.Dat
         return pd.concat(df_list, ignore_index=True)
     return pd.DataFrame()
 
+>>>>>>> c5fccbe (16/10  09h40)
 def load_data(
     mvt_stock_folder_id: str,
     reception_folder_id: str,
@@ -74,6 +132,36 @@ def load_data(
     file_inventaire_id: str,
     cache_dir: str = "cache"
 ):
+<<<<<<< HEAD
+    service = get_drive_service()
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+
+    # --------------------------
+    # Lecture du fichier inventaire pour la date de référence
+    # --------------------------
+    df_inventaire = download_excel(file_inventaire_id)
+
+    try:
+        # Lecture de la date de création interne
+        wb = load_workbook(io.BytesIO(download_excel(file_inventaire_id).to_excel(index=False, engine='openpyxl')), read_only=True)
+        props = wb.properties
+        wb.close()
+        date_ref = props.created if props.created else datetime.now()
+    except Exception:
+        date_ref = datetime.now()
+
+    print(f"Date de référence pour filtrage : {date_ref}")
+
+    # --------------------------
+    # Chargement des datasets principaux
+    # --------------------------
+    df_mvt_stock = concat_excel_from_drive_folder(mvt_stock_folder_id, date_ref)
+    df_reception = concat_excel_from_drive_folder(reception_folder_id, date_ref)
+    df_sorties = concat_excel_from_drive_folder(sorties_folder_id, date_ref)
+
+    # ----- ECART STOCK (parquet) -----
+    ecart_files = list_files_in_folder(service, ecart_stock_folder_id)
+=======
     """
     Charge toutes les données Excel depuis Google Drive.
     Ne conserve que les fichiers postérieurs à la date de création réelle de l'inventaire.
@@ -108,11 +196,28 @@ def load_data(
     # ECART STOCK
     # --------------------------
     ecart_files = list_files_in_folder(ecart_stock_folder_id)
+>>>>>>> c5fccbe (16/10  09h40)
     if len(ecart_files) < 2:
         raise FileNotFoundError("Pas assez de fichiers dans le dossier Ecart Stock pour comparaison.")
 
     ecart_files_sorted = sorted(ecart_files, key=lambda x: x['modifiedTime'])
     file_prev_id, file_last_id = ecart_files_sorted[-2]['id'], ecart_files_sorted[-1]['id']
+<<<<<<< HEAD
+    df_ecart_stock_prev = download_file(service, file_prev_id, 'parquet')
+    df_ecart_stock_last = download_file(service, file_last_id, 'parquet')
+
+    # --------------------------
+    # Fichier Article et Inventaire
+    # --------------------------
+    df_article_euros = download_excel(file_article_id)
+    df_inventaire = download_excel(file_inventaire_id)
+
+    # --------------------------
+    # Gestion cache (exemple)
+    # --------------------------
+    file_last_parquet = Path(cache_dir) / "ecart_stock_last.parquet"
+    df_ecart_stock_last.to_parquet(file_last_parquet, index=False)
+=======
 
     df_ecart_stock_prev = download_excel(file_prev_id)
     df_ecart_stock_last = download_excel(file_last_id)
@@ -127,10 +232,15 @@ def load_data(
     # Gestion cache (exemple)
     # --------------------------
     file_last_parquet = Path(cache_dir) / "ecart_stock_last.parquet"
+>>>>>>> c5fccbe (16/10  09h40)
     file_last_txt = Path(cache_dir) / "file_last.txt"
     with open(file_last_txt, "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet).replace("\\", "/"))
 
+<<<<<<< HEAD
+    # ----- Synthèse -----
+=======
+>>>>>>> c5fccbe (16/10  09h40)
     print("\n=== SYNTHÈSE DU CHARGEMENT ===")
     print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
     print(f"Réception : {len(df_reception)} lignes")

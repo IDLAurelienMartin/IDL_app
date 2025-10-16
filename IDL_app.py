@@ -935,21 +935,14 @@ def Analyse_stock():
     tmp_save.close()
     df_comments.to_parquet(tmp_save.name, index=False)
 
-    # Création du service Google Drive via OAuth2 utilisateur
-    from scripts.oauth_drive import get_drive_service  # ton module OAuth2 existant
-
-    drive_service = get_drive_service()
-    if not drive_service:
-        st.error("Impossible de créer le service Google Drive via OAuth2.")
-        return
-
-    # ID du dossier où uploader les Parquets (cache)
+    # uploader ou mettre à jour sur Drive (même nom que celui que tu avais lu, ex. file_last.parquet)
     try:
-        input_folder_id = os.environ["GOOGLE_DRIVE_INPUT_FOLDER_ID"]
+        shared_drive_folder_id = os.environ["GOOGLE_DRIVE_INPUT_FOLDER_ID"]
     except KeyError:
         st.error("La variable d'environnement GOOGLE_DRIVE_INPUT_FOLDER_ID n'est pas définie.")
         return
 
+    # --- Upload ou mise à jour du fichier ---
     uploaded_id = upload_or_update_file(
         drive_service,
         tmp_save.name,
