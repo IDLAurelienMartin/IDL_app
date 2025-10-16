@@ -30,8 +30,17 @@ from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-drive_service = get_drive_service()
+# === Initialisation Google Drive (OAuth 2 Service Account) ===
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+SERVICE_ACCOUNT_INFO = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # JSON string du compte de service
 
+if not SERVICE_ACCOUNT_INFO:
+    st.error("La variable d'environnement GOOGLE_SERVICE_ACCOUNT_JSON n'est pas définie.")
+    st.stop()
+
+import json
+creds = Credentials.from_service_account_info(json.loads(SERVICE_ACCOUNT_INFO), scopes=SCOPES)
+drive_service = build("drive", "v3", credentials=creds)
 
 def download_drive_file(service, file_name, dest_path):
     """Télécharge un fichier Google Drive par son nom."""
@@ -483,90 +492,55 @@ def get_drive_service():
 drive_service = get_drive_service()
 
 
-# === Helpers pour Google Drive ===
-def get_file_id_by_name(service, name, folder_id=None, mimeType=None):
-    q = f"name = '{name}' and trashed = false"
+# === Fonction utilitaires ===
+def get_file_id_by_name(service, name, folder_id=None):
+    query = f"name = '{name}' and trashed = false"
     if folder_id:
-        q += f" and '{folder_id}' in parents"
-    if mimeType:
-        q += f" and mimeType = '{mimeType}'"
-
-    try:
-        resp = service.files().list(
-            q=q,
-            corpora="user",
-            fields="files(id, name, parents)",
-            pageSize=50
-        ).execute()
-        files = resp.get("files", [])
-        if not files:
-            return None
-        return files[0]["id"]
-    except Exception as e:
-        st.error(f"Erreur lors de la recherche du fichier {name} sur Drive : {e}")
-        return None
+        query += f" and '{folder_id}' in parents"
+    results = service.files().list(q=query, fields="files(id)").execute()
+    files = results.get("files", [])
+    return files[0]["id"] if files else None
 
 def download_parquet_from_drive(service, file_id):
-    if file_id is None:
-        return None
-    try:
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        fh.seek(0)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as tmp:
-            tmp.write(fh.read())
-        return tmp.name
-    except Exception as e:
-        st.error(f"Erreur lors du téléchargement du fichier Drive (id={file_id}) : {e}")
-        return None
+    from googleapiclient.http import MediaIoBaseDownload
+    import io
+    request = service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    fh.seek(0)
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".parquet")
+    with open(tmp_file.name, "wb") as f:
+        f.write(fh.read())
+    return tmp_file.name
 
-def upload_or_update_file(service, local_path, filename, folder_id):
-    """
-    Upload ou met à jour un fichier dans My Drive (OAuth2 Gmail).
-    """
-    try:
-        safe_filename = filename.replace("'", "\\'")
-        query = f"name = '{safe_filename}' and trashed = false and '{folder_id}' in parents"
-        resp = service.files().list(
-            q=query,
-            fields="files(id, name)",
-            pageSize=1
-        ).execute()
-        files = resp.get("files", [])
-        media = MediaFileUpload(local_path, resumable=True)
-
-        if files:
-            file_id = files[0]["id"]
-            updated_file = service.files().update(
-                fileId=file_id,
-                media_body=media
-            ).execute()
-            return updated_file["id"]
-        else:
-            file_metadata = {"name": filename, "parents": [folder_id]}
-            new_file = service.files().create(
-                body=file_metadata,
-                media_body=media
-            ).execute()
-            return new_file["id"]
-    except Exception as e:
-        st.error(f"Erreur lors de l'upload du fichier {filename} sur Drive : {e}")
-        return None
+def upload_or_update_file(service, local_path, file_name, folder_id):
+    from googleapiclient.http import MediaFileUpload
+    file_id = get_file_id_by_name(service, file_name, folder_id)
+    media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
+    if file_id:
+        # Update existant
+        updated_file = service.files().update(fileId=file_id, media_body=media).execute()
+        return updated_file["id"]
+    else:
+        # Nouveau fichier
+        file_metadata = {"name": file_name, "parents": [folder_id]}
+        created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        return created_file["id"]
     
+# === Fonction principale ===
 # === Fonction principale ===
 def Analyse_stock():
     st.set_page_config(layout="wide")
     today = datetime.today().strftime("%d/%m/%Y")
+
     from scripts.utils_stock import update_emplacement, ajouter_totaux, color_rows
 
     # === Dossier Drive d’entrée (My Drive) ===
-    try:
-        drive_folder_id = os.environ["GOOGLE_DRIVE_INPUT_FOLDER_ID"]
-    except KeyError:
+    drive_folder_id = os.environ.get("GOOGLE_DRIVE_INPUT_FOLDER_ID")
+    if not drive_folder_id:
         st.error("La variable d'environnement GOOGLE_DRIVE_INPUT_FOLDER_ID n'est pas définie.")
         return
 
@@ -607,6 +581,7 @@ def Analyse_stock():
     for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
         if "MGB_6" in df.columns:
             df["MGB_6"] = df["MGB_6"].astype(str).str.strip().str.replace(" ", "")
+
 
     # --- Interface principale Streamlit ---
     st.title("Analyse des écarts de stock")
@@ -933,23 +908,16 @@ def Analyse_stock():
 
     tmp_save = tempfile.NamedTemporaryFile(delete=False, suffix=".parquet")
     tmp_save.close()
-    df_comments.to_parquet(tmp_save.name, index=False)
-
-    # uploader ou mettre à jour sur Drive (même nom que celui que tu avais lu, ex. file_last.parquet)
-    try:
-        shared_drive_folder_id = os.environ["GOOGLE_DRIVE_INPUT_FOLDER_ID"]
-    except KeyError:
-        st.error("La variable d'environnement GOOGLE_DRIVE_INPUT_FOLDER_ID n'est pas définie.")
-        return
+    
+    st.session_state.df_comments.to_parquet(tmp_save.name, index=False)
 
     # --- Upload ou mise à jour du fichier ---
     uploaded_id = upload_or_update_file(
-        drive_service,
-        tmp_save.name,
-        Path(parquet_path).name,
-        folder_id=input_folder_id
-    )
-
+            drive_service,
+            tmp_save.name,
+            "df_comments.parquet",
+            folder_id=drive_folder_id
+        )
 
     if uploaded_id:
         st.success("Parquet sauvegardé sur Google Drive")
