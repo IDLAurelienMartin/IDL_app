@@ -1,6 +1,7 @@
 # preprocess_stock.py
 import io
 import pandas as pd
+import os
 import sys
 import re
 from datetime import datetime
