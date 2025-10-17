@@ -483,7 +483,6 @@ def is_local_newer(local_path: Path, drive_service, drive_folder_id, file_name: 
 def sync_folder(local_folder, drive_folder_id):
     local_folder = Path(local_folder)
     if not local_folder.exists():
-        st.warning(f"Dossier local introuvable : {local_folder}")
         return
 
     for file_path in local_folder.glob("*"):
@@ -495,15 +494,12 @@ def sync_folder(local_folder, drive_folder_id):
                     file_name=file_path.name,
                     folder_id=drive_folder_id
                 )
-            else:
-                st.info(f"✅ {file_path.name} est à jour sur Drive, pas besoin de mise à jour.")
-
+            
 # --- Synchronisation fichiers uniques ---
 def sync_files(files_dict):
     for local_path, (file_name, drive_folder_id) in files_dict.items():
         file_path = Path(local_path)
         if not file_path.exists():
-            st.warning(f"Fichier introuvable : {file_path}")
             continue
         if is_local_newer(file_path, drive_service, drive_folder_id, file_name):
             upload_or_update_file(
@@ -512,26 +508,20 @@ def sync_files(files_dict):
                 file_name=file_name,
                 folder_id=drive_folder_id
             )
-        else:
-            st.info(f"✅ {file_name} est à jour sur Drive, pas besoin de mise à jour.")
-
+        
 # --- Lancement de la synchronisation ---
-st.header("🔄 Synchronisation Google Drive")
 
 for local_path, (label, drive_folder_id) in SYNC_FOLDERS.items():
-    st.subheader(f"Dossier : {label}")
+
     sync_folder(local_path, drive_folder_id)
 
-st.subheader("Fichiers uniques")
 sync_files(SYNC_FILES)
 
-st.success("✅ Synchronisation terminée !")
 
 # === Initialisation du service Google Drive ===
 def get_drive_service():
     # --- OAuth utilisateur via token JSON stocké dans Render ---
     token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
-    st.write(f"Type du token : {type(token_json)}")
     if token_json:
         try:
             creds_info = json.loads(token_json)
@@ -540,7 +530,6 @@ def get_drive_service():
                 if creds.expired and creds.refresh_token:
                     creds.refresh(Request())
             service = build("drive", "v3", credentials=creds)
-            st.info("Connexion Google Drive via OAuth utilisateur réussie.")
             return service
         except Exception as e:
             st.error(f"Impossible de se connecter via OAuth utilisateur : {e}")
@@ -555,24 +544,20 @@ def get_file_id_by_name(service, file_name, folder_id):
     Cherche l'ID d'un fichier dans un dossier Drive donné par son nom.
     Affiche un warning si le fichier n'est pas trouvé et liste tous les fichiers disponibles.
     """
-    st.info(f"🔍 Recherche du fichier '{file_name}' dans le dossier Drive ID : {folder_id}")
     try:
         query = f"'{folder_id}' in parents and trashed=false and name='{file_name}'"
         results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         items = results.get('files', [])
 
         if items:
-            st.success(f"✅ Fichier trouvé : {file_name}")
             return items[0]['id']
         else:
-            st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name}")
             all_files = service.files().list(
                 q=f"'{folder_id}' in parents and trashed=false",
                 spaces='drive',
                 fields='files(id, name)'
             ).execute().get('files', [])
             if all_files:
-                st.info("Fichiers disponibles dans ce dossier :")
                 for f in all_files:
                     st.info(f"- {f['name']} (ID: {f['id']})")
             else:
@@ -594,12 +579,10 @@ def upload_or_update_file(service, local_path, file_name, folder_id):
 
         if file_id:
             updated_file = service.files().update(fileId=file_id, media_body=media).execute()
-            st.success(f"Fichier mis à jour : {file_name} (ID: {file_id})")
             return updated_file["id"]
         else:
             file_metadata = {"name": file_name, "parents": [folder_id]}
             created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-            st.success(f"Fichier créé : {file_name} (ID: {created_file['id']})")
             return created_file["id"]
 
     except HttpError as e:
@@ -649,8 +632,7 @@ def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
             fields="files(id, name, createdTime)"
         ).execute()
         files = results.get("files", [])
-        if files:
-            st.info(f"Dernier fichier trouvé : {files[0]['name']} (ID: {files[0]['id']})")
+        
         return files[0] if files else None
     except HttpError as e:
         st.error(f"Erreur lors de la récupération du dernier fichier : {e}")
@@ -685,7 +667,6 @@ def Analyse_stock():
         return
         # Créer une liste de noms de fichiers
     expected_files = [f['name'] for f in files]
-    st.write("Fichiers détectés dans le dossier Drive :", expected_files)
 
     # === Télécharger tous les fichiers détectés ===
     local_paths = {}
@@ -694,7 +675,6 @@ def Analyse_stock():
         file_id = file['id']
         local_paths[file_name] = download_parquet_from_drive(drive_service, file_id)
 
-    st.success("Tous les fichiers ont été téléchargés avec succès.")
     for name, path in local_paths.items():
         st.write(f"{name} : {path}")
 
