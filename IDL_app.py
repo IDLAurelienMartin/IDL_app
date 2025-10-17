@@ -540,26 +540,27 @@ def get_file_id_by_name(service, file_name, folder_id):
             return items[0]["id"]
         return None
     except HttpError as e:
-        print("Erreur lors de la recherche du fichier:", e)
+        st.error("Erreur lors de la recherche du fichier:", e)
         return None
 
 # --- Upload ou update d'un fichier ---
 def upload_or_update_file(service, local_path, file_name, folder_id):
     file_id = get_file_id_by_name(service, file_name, folder_id)
     media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
-    
     try:
         if file_id:
             updated_file = service.files().update(fileId=file_id, media_body=media).execute()
-            print(f"Fichier mis à jour : {file_name} (ID: {file_id})")
+            st.success(f"Fichier mis à jour : {file_name} (ID: {file_id})")
             return updated_file["id"]
         else:
             file_metadata = {"name": file_name, "parents": [folder_id]}
             created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-            print(f"Fichier créé : {file_name} (ID: {created_file['id']})")
+            st.success(f"Fichier créé : {file_name} (ID: {created_file['id']})")
             return created_file["id"]
     except HttpError as e:
-        print("Erreur lors de l'upload ou update :", e)
+        st.error(f"Erreur Http lors de l'upload : {e.resp.status}")
+        st.error(f"Détails : {e.error_details}")
+        st.error(f"Contenu : {e.content}")
         return None
     
 def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
