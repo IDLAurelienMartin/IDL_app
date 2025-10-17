@@ -1,3 +1,4 @@
+# IDL_DB/IDL_app.py
 import streamlit as st
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
@@ -31,10 +32,10 @@ from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+import pickle
+import os
+import io
 
-# === Initialisation Google Drive (OAuth 2 Service Account) ===
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-TOKEN_FILE = "token.json" 
 
 def tab_home():
     st.title("Accueil")
@@ -428,6 +429,10 @@ def tab_QR_Codes():
 
 
 # === Fonction utilitaires ===
+
+# === Initialisation Google Drive (OAuth 2 Service Account) ===
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+TOKEN_FILE = "token.json"
 # === Fonction pour initialiser le service Google Drive ===
 def get_drive_service():
     """
@@ -438,12 +443,12 @@ def get_drive_service():
     """
 
     # --- Service Account ---
-    service_json = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_JSON")
+    service_json = os.environ.get("GOOGLE_SERVICE_JSON")
     if service_json:
         try:
             creds_info = json.loads(service_json)
         except Exception as e:
-            raise ValueError(f"Impossible de parser GOOGLE_OAUTH_CREDENTIALS_JSON : {e}")
+            raise ValueError(f"Impossible de parser GOOGLE_SERVICE_JSON : {e}")
         creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
         service = build("drive", "v3", credentials=creds)
         print("Connexion Google Drive avec Service Account réussie.")
@@ -475,9 +480,13 @@ def get_drive_service():
                     creds = flow.run_local_server(port=8080)
 
             # Sauvegarde automatique du token pour les prochaines exécutions
-            os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+            token_dir = os.path.dirname(TOKEN_FILE)
+            if token_dir:  # ne créer le dossier que si le chemin n'est pas vide
+                os.makedirs(token_dir, exist_ok=True)
+
             with open(TOKEN_FILE, "wb") as token_file:
                 pickle.dump(creds, token_file)
+
 
         service = build("drive", "v3", credentials=creds)
         print("Connexion Google Drive via OAuth utilisateur réussie.")
@@ -486,7 +495,7 @@ def get_drive_service():
     # --- Aucun moyen de se connecter ---
     raise ValueError(
         "Aucun identifiant Google Drive trouvé. "
-        "Définir GOOGLE_OAUTH_CREDENTIALS_JSON ou créer 'IDL_DB/credentials.json'."
+        "Définir GOOGLE_SERVICE_JSON ou créer 'IDL_DB/credentials.json'."
     )
 
 # === Initialisation ===

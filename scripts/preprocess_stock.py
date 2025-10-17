@@ -2,97 +2,74 @@
 import os
 import io
 import re
-import streamlit as st
-import pandas as pd
 import sys
-from pathlib import Path
-from datetime import datetime
-from openpyxl import load_workbook
 import json
 import pickle
+import pandas as pd
+from pathlib import Path
+from datetime import datetime, timezone
+from openpyxl import load_workbook
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from google.oauth2.service_account import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from pathlib import Path
-from datetime import datetime
-import pandas as pd
-import io
-from openpyxl import load_workbook
-import os
-import json
-import pickle
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-
+from google.auth.transport.requests import Request
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-TOKEN_FILE = "IDL_DB/token.json"  # Nouveau fichier JSON lisible
+TOKEN_FILE = "IDL_DB/token.json"  # fichier JSON lisible
 
+# --------------------------
+# Connexion Google Drive
+# --------------------------
 def get_drive_service():
-    """Connexion Google Drive via Service Account, variable d'environnement Render ou OAuth local."""
+    """Connexion Google Drive via Service Account ou OAuth."""
     print("[INFO] Début de la connexion à Google Drive...")
+    creds = None
 
     # --- Service Account via variable d'environnement ---
     service_json = os.environ.get("GOOGLE_SERVICE_JSON")
     if service_json:
-        print("[INFO] GOOGLE_SERVICE_JSON trouvé. Utilisation du Service Account.")
         creds_info = json.loads(service_json)
         creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
-        service = build("drive", "v3", credentials=creds)
-        print("[SUCCESS] Connexion Google Drive via Service Account réussie.")
-        return service
+        print("[SUCCESS] Connexion via Service Account réussie.")
 
-    # --- OAuth via variable d'environnement Render ---
+    # --- OAuth via variable d'environnement ---
     env_token = os.environ.get("GOOGLE_DRIVE_TOKEN")
     if env_token:
-        print("[INFO] GOOGLE_DRIVE_TOKEN trouvé dans l'environnement. Chargement des credentials...")
         creds = Credentials.from_authorized_user_info(json.loads(env_token), SCOPES)
         print("[SUCCESS] Credentials chargés depuis la variable d'environnement.")
 
     # --- OAuth local ---
     credentials_path = "IDL_DB/credentials.json"
-    if not creds and os.path.exists(TOKEN_FILE):
-        print(f"[INFO] Fichier {TOKEN_FILE} trouvé. Chargement des credentials existants...")
+    if creds is None and os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, "r", encoding="utf-8") as token_file:
             creds = Credentials.from_authorized_user_info(json.load(token_file), SCOPES)
         print("[SUCCESS] Credentials chargés depuis le fichier token.")
 
-    # Vérifier si les credentials sont valides
+    # --- Refresh ou nouvel OAuth ---
     if not creds or not creds.valid:
-        print("[INFO] Credentials invalides ou absents.")
         if creds and creds.expired and creds.refresh_token:
-            print("[INFO] Credentials expirés. Tentative de refresh...")
             creds.refresh(Request())
             print("[SUCCESS] Credentials rafraîchis.")
         else:
-            print(f"[INFO] Démarrage du flux OAuth depuis {credentials_path}...")
             flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
             creds = flow.run_local_server(port=8080)
             print("[SUCCESS] OAuth local terminé.")
 
-        # Sauvegarder les credentials dans un fichier JSON lisible
-        token_dir = os.path.dirname(TOKEN_FILE)
-        if token_dir:
-            os.makedirs(token_dir, exist_ok=True)
+        # Sauvegarder les credentials
+        Path(os.path.dirname(TOKEN_FILE)).mkdir(parents=True, exist_ok=True)
         with open(TOKEN_FILE, "w", encoding="utf-8") as token_file:
             token_file.write(creds.to_json())
         print(f"[SUCCESS] Credentials sauvegardés dans {TOKEN_FILE}.")
 
-    # Construire le service Google Drive
-    print("[INFO] Construction du service Google Drive...")
     service = build("drive", "v3", credentials=creds)
     print("[SUCCESS] Service Google Drive prêt à l'emploi.")
     return service
 
-
-# -------------------------------
+# --------------------------
 # Fonctions utilitaires Drive
-# -------------------------------
+# --------------------------
 def download_excel(file_id: str, service) -> pd.DataFrame:
     """Télécharge un fichier Excel depuis Google Drive et le retourne en DataFrame."""
     request = service.files().get_media(fileId=file_id)
@@ -114,36 +91,54 @@ def list_files_in_folder(service, folder_id: str, mime_type=None):
 
 def concat_excel_from_drive_folder(folder_id: str, date_ref: datetime, service) -> pd.DataFrame:
     """Concatène tous les fichiers Excel récents d’un dossier Drive."""
-    files = list_files_in_folder(service, folder_id, mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    recent_files = [
-        f for f in files
-        if datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00")) > date_ref
-    ]
+
+    # Rendre date_ref timezone-aware si nécessaire
+    if date_ref.tzinfo is None:
+        date_ref = date_ref.replace(tzinfo=timezone.utc)
+
+    # Liste des fichiers Excel dans le dossier Drive
+    files = list_files_in_folder(
+        service, 
+        folder_id, 
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # Ignorer les fichiers qui ne se terminent pas par .xlsx
+    files = [f for f in files if f.get("name", "").lower().endswith(".xlsx")]
+
+    # Filtrer les fichiers récents
+    recent_files = []
+    for f in files:
+        try:
+            modified_time = datetime.fromisoformat(f["modifiedTime"].replace("Z", "+00:00"))
+            if modified_time > date_ref:
+                recent_files.append(f)
+        except Exception as e:
+            print(f"Impossible de parser la date de modification de {f.get('name', f['id'])} : {e}")
+
     if not recent_files:
         print(f"Aucun fichier récent trouvé dans {folder_id}")
         return pd.DataFrame()
+
+    # Télécharger et concaténer les fichiers
     dfs = []
     for f in recent_files:
         try:
-            dfs.append(download_excel(f["id"], service))
+            df = download_excel(f["id"], service)
+            dfs.append(df)
         except Exception as e:
             print(f"Impossible de charger {f['name']} : {e}")
+
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-
-def load_data(
-    cache_dir: str = "cache"
-):
-    """
-    Charge toutes les données depuis Google Drive.
-    Fonctionne en local ou sur serveur Render via Service Account / OAuth2.
-    """
+# --------------------------
+# Chargement global
+# --------------------------
+def load_data(cache_dir: str = "cache"):
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
-
-    # --- Connexion Google Drive ---
     service = get_drive_service()
 
-    # --- IDs Google Drive ---
+    # --- IDs Drive ---
     dossier_mvt_stock_id    = "1R5lj6-qGF2Pim6tIjgs9yzEPGLVt5eee"
     dossier_reception_id    = "1f6ADFUmmDprx87erpDJMK9N-qwSNJqSp"
     dossier_sorties_id      = "18HEEccAHsvItNgX0b4f-NA3nb_vLKU5T"
@@ -151,7 +146,7 @@ def load_data(
     file_article_id         = "1yW9Ign5P5K-ySI7d0cGR6HMNcXNM6t7M"
     file_inventaire_id      = "1vevqdtpBCXCE_iWSVUnbUfqgyJiW945K"
 
-    # --- Date de référence basée sur l'inventaire ---
+    # --- Date référence inventaire ---
     df_inventaire = download_excel(file_inventaire_id, service)
     try:
         buf = io.BytesIO()
@@ -164,7 +159,7 @@ def load_data(
         date_ref = datetime.now()
     print(f"Date de référence pour filtrage : {date_ref}")
 
-    # --- Chargement des dossiers principaux ---
+    # --- Chargement dossiers principaux ---
     df_mvt_stock = concat_excel_from_drive_folder(dossier_mvt_stock_id, date_ref, service)
     df_reception = concat_excel_from_drive_folder(dossier_reception_id, date_ref, service)
     df_sorties = concat_excel_from_drive_folder(dossier_sorties_id, date_ref, service)

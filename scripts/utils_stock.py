@@ -1,3 +1,4 @@
+# utils_stock.py
 import pandas as pd
 
 def ajouter_totaux(df, colonnes_totaux):
