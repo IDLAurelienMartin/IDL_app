@@ -442,27 +442,9 @@ TOKEN_FILE = "token.json"
 
 # === Initialisation du service Google Drive ===
 def get_drive_service():
-    """
-    Initialise Google Drive API.
-    Priorité :
-        1. Service Account via GOOGLE_SERVICE_JSON
-        2. OAuth utilisateur via GOOGLE_DRIVE_TOKEN (JSON)
-    Compatible local & Render.
-    """
-    # --- Service Account ---
-    service_json = os.environ.get("GOOGLE_SERVICE_JSON")
-    if service_json:
-        try:
-            creds_info = json.loads(service_json)
-            creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
-            service = build("drive", "v3", credentials=creds)
-            st.info("Connexion Google Drive avec Service Account réussie.")
-            return service
-        except Exception as e:
-            st.warning(f"Impossible de se connecter avec Service Account : {e}")
-
     # --- OAuth utilisateur via token JSON stocké dans Render ---
     token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
+    st.write(f"Type du token : {type(token_json)}")
     if token_json:
         try:
             creds_info = json.loads(token_json)
@@ -474,14 +456,10 @@ def get_drive_service():
             st.info("Connexion Google Drive via OAuth utilisateur réussie.")
             return service
         except Exception as e:
-            st.warning(f"Impossible de se connecter via OAuth utilisateur : {e}")
+            st.error(f"Impossible de se connecter via OAuth utilisateur : {e}")
 
-    # --- Aucun moyen de se connecter ---
-    raise ValueError(
-        "Aucun identifiant Google Drive trouvé. "
-        "Définir GOOGLE_SERVICE_JSON ou GOOGLE_DRIVE_TOKEN."
-    )
-
+    # --- Sinon erreur ---
+    raise ValueError("Aucun identifiant Google Drive trouvé. Définir GOOGLE_DRIVE_TOKEN.")
 
 # === Fonctions utilitaires Drive ===
 
@@ -584,6 +562,8 @@ def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
             fields="files(id, name, createdTime)"
         ).execute()
         files = results.get("files", [])
+        if files:
+            st.info(f"Dernier fichier trouvé : {files[0]['name']} (ID: {files[0]['id']})")
         return files[0] if files else None
     except HttpError as e:
         st.error(f"Erreur lors de la récupération du dernier fichier : {e}")
