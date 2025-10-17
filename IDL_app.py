@@ -35,6 +35,8 @@ from google.oauth2.service_account import Credentials as ServiceAccountCredentia
 import pickle
 import os
 import io
+from googleapiclient.errors import HttpError
+
 
 
 def tab_home():
@@ -502,14 +504,6 @@ def get_drive_service():
 drive_service = get_drive_service()
 
 # === Fonctions utilitaires Drive ===
-def get_file_id_by_name(service, name, folder_id=None):
-    query = f"name = '{name}' and trashed = false"
-    if folder_id:
-        query += f" and '{folder_id}' in parents"
-    results = service.files().list(q=query, fields="files(id)").execute()
-    files = results.get("files", [])
-    return files[0]["id"] if files else None
-
 def download_parquet_from_drive(service, file_id):
     request = service.files().get_media(fileId=file_id)
     fh = io.BytesIO()
@@ -523,26 +517,51 @@ def download_parquet_from_drive(service, file_id):
         f.write(fh.read())
     return tmp_file.name
 
+#--- Initialisation du service Drive via token OAuth depuis Render ---
 def get_drive_service_from_env():
     token_pickle = os.environ.get("GOOGLE_DRIVE_TOKEN")
     if not token_pickle:
         raise ValueError("Le token OAuth n'est pas défini dans GOOGLE_DRIVE_TOKEN")
+    
+    # Convertir la string stockée en bytes pour pickle
+    creds = pickle.loads(token_pickle.encode("latin1"))
+    
+    # Construire le service Drive
+    service = build("drive", "v3", credentials=creds)
+    return service
 
-    creds = pickle.loads(token_pickle.encode("latin1"))  # si stocké comme bytes picklé converti en str
-    return build("drive", "v3", credentials=creds)
+# --- Récupérer l'ID du fichier par nom dans un dossier ---
+def get_file_id_by_name(service, file_name, folder_id):
+    try:
+        query = f"'{folder_id}' in parents and name='{file_name}' and trashed=false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        items = results.get("files", [])
+        if items:
+            return items[0]["id"]
+        return None
+    except HttpError as e:
+        print("Erreur lors de la recherche du fichier:", e)
+        return None
 
+# --- Upload ou update d'un fichier ---
 def upload_or_update_file(service, local_path, file_name, folder_id):
     file_id = get_file_id_by_name(service, file_name, folder_id)
     media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
     
-    if file_id:
-        updated_file = service.files().update(fileId=file_id, media_body=media).execute()
-        return updated_file["id"]
-    else:
-        file_metadata = {"name": file_name, "parents": [folder_id]}
-        created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-        return created_file["id"]
-
+    try:
+        if file_id:
+            updated_file = service.files().update(fileId=file_id, media_body=media).execute()
+            print(f"Fichier mis à jour : {file_name} (ID: {file_id})")
+            return updated_file["id"]
+        else:
+            file_metadata = {"name": file_name, "parents": [folder_id]}
+            created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+            print(f"Fichier créé : {file_name} (ID: {created_file['id']})")
+            return created_file["id"]
+    except HttpError as e:
+        print("Erreur lors de l'upload ou update :", e)
+        return None
+    
 def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
     q = f"name contains '{name_contains}' and trashed = false"
     if folder_id:
