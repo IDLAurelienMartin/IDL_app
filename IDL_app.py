@@ -588,22 +588,28 @@ def Analyse_stock():
         st.error("La variable d'environnement GOOGLE_DRIVE_INPUT_FOLDER_ID n'est pas définie.")
         return
 
-    expected_files = [
-        "article_euros.parquet", "inventaire.parquet", "mvt_stock.parquet",
-        "reception.parquet", "sorties.parquet", "ecart_stock_prev.parquet",
-        "ecart_stock_last.parquet"
-    ]
+    # === Lister tous les fichiers présents dans le dossier Drive ===
+    results = drive_service.files().list(
+        q=f"'{drive_folder_id}' in parents and trashed=false",
+        spaces='drive',
+        fields='files(id, name)'
+    ).execute()
+    
+    files = results.get('files', [])
+    if not files:
+        st.warning("Aucun fichier trouvé dans le dossier Drive.")
+        return
+        # Créer une liste de noms de fichiers
+    expected_files = [f['name'] for f in files]
+    st.write("Fichiers détectés dans le dossier Drive :", expected_files)
 
-    # Télécharger tous les fichiers attendus
+    # === Télécharger tous les fichiers détectés ===
     local_paths = {}
-    for name in expected_files:
-        file_id = get_file_id_by_name(drive_service, name, folder_id=drive_folder_id)
-        if not file_id:
-            # Warning affiché directement par get_file_id_by_name, on continue ou on arrête
-            return
-        local_paths[name] = download_parquet_from_drive(drive_service, file_id)
+    for file in files:
+        file_name = file['name']
+        file_id = file['id']
+        local_paths[file_name] = download_parquet_from_drive(drive_service, file_id)
 
-    # === Affichage dans Streamlit ===
     st.success("Tous les fichiers ont été téléchargés avec succès.")
     for name, path in local_paths.items():
         st.write(f"{name} : {path}")
