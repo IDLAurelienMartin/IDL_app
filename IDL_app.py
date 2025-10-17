@@ -599,7 +599,7 @@ def Analyse_stock():
     # === Affichage dans Streamlit ===
     st.success("Tous les fichiers ont été téléchargés avec succès.")
     for name, path in local_paths.items():
-        st.write(f"{name} : {path}"
+        st.write(f"{name} : {path}")
 
     # --- Lecture des fichiers parquet ---
     df_article_euros = pd.read_parquet(local_paths["article_euros.parquet"])
