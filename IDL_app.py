@@ -1110,10 +1110,6 @@ def Analyse_stock():
     # --------------------------
     if st.button("Générer le PDF du rapport"):
         df_for_pdf = st.session_state.df_comments.copy()
-        df_for_pdf = st.session_state.df_comments[
-            st.session_state.df_comments["Date_Dernier_Commentaire"].notna() &
-            (st.session_state.df_comments["Date_Dernier_Commentaire"] != "")
-        ].fillna("")
 
         # Fusion avec df_sorties pour ajouter la colonne 'Cellule'
         if 'df_sorties' in locals():
@@ -1138,14 +1134,16 @@ def Analyse_stock():
             df_for_pdf["Date_Dernier_Commentaire"], format="%d-%m-%Y", errors="coerce"
         )
 
+        df_for_pdf_comments = df_for_pdf[df_for_pdf["Date_Dernier_Commentaire"].notna() & 
+                                 (df_for_pdf["Date_Dernier_Commentaire"] != "")]
+    
         # Ordonner les lignes :
         # 1️ METRO par date croissante
         # 2️ IDL par date croissante
-        df_for_pdf = pd.concat([
-            df_for_pdf[df_for_pdf["Choix_traitement"] == "METRO"].sort_values("Date_Dernier_Commentaire_dt"),
-            df_for_pdf[df_for_pdf["Choix_traitement"] == "IDL"].sort_values("Date_Dernier_Commentaire_dt"),
-            df_for_pdf[df_for_pdf["Choix_traitement"] == ""].sort_values("Date_Dernier_Commentaire_dt"),
-            df_for_pdf[df_for_pdf["Choix_traitement"] == "XX"].sort_values("Date_Dernier_Commentaire_dt")
+        df_for_pdf_comments = pd.concat([
+            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "METRO"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "IDL"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "XX"].sort_values("Date_Dernier_Commentaire_dt")
         ])
 
         col_widths = [15, 70, 15, 15, 15, 15, 20, 15, 105]
