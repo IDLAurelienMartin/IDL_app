@@ -549,19 +549,26 @@ def get_file_id_by_name(service, file_name, folder_id):
     """
     Cherche l'ID d'un fichier dans un dossier Drive donné par son nom.
     Affiche un warning si le fichier n'est pas trouvé et liste tous les fichiers disponibles.
+    Indique également le dossier utilisé pour la recherche.
     """
+    st.info(f"🔍 Recherche du fichier '{file_name}' dans le dossier Drive ID : {folder_id}")
+
     query = f"'{folder_id}' in parents and trashed=false and name='{file_name}'"
     results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
     items = results.get('files', [])
 
     if items:
+        st.success(f"✅ Fichier trouvé : {file_name}")
         return items[0]['id']
     else:
         # Fichier non trouvé → lister tous les fichiers pour debug
-        st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name}")
-        all_files = service.files().list(q=f"'{folder_id}' in parents and trashed=false",
-                                         spaces='drive',
-                                         fields='files(id, name)').execute().get('files', [])
+        st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name} dans le dossier ID : {folder_id}")
+        all_files = service.files().list(
+            q=f"'{folder_id}' in parents and trashed=false",
+            spaces='drive',
+            fields='files(id, name)'
+        ).execute().get('files', [])
+
         if all_files:
             st.info("Fichiers disponibles dans ce dossier :")
             for f in all_files:
