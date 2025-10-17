@@ -545,6 +545,31 @@ def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
     files = results.get("files", [])
     return files[0] if files else None
 
+def get_file_id_by_name(service, file_name, folder_id):
+    """
+    Cherche l'ID d'un fichier dans un dossier Drive donné par son nom.
+    Affiche un warning si le fichier n'est pas trouvé et liste tous les fichiers disponibles.
+    """
+    query = f"'{folder_id}' in parents and trashed=false and name='{file_name}'"
+    results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+    items = results.get('files', [])
+
+    if items:
+        return items[0]['id']
+    else:
+        # Fichier non trouvé → lister tous les fichiers pour debug
+        st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name}")
+        all_files = service.files().list(q=f"'{folder_id}' in parents and trashed=false",
+                                         spaces='drive',
+                                         fields='files(id, name)').execute().get('files', [])
+        if all_files:
+            st.info("Fichiers disponibles dans ce dossier :")
+            for f in all_files:
+                st.info(f"- {f['name']} (ID: {f['id']})")
+        else:
+            st.info("Aucun fichier trouvé dans ce dossier.")
+        return None
+
 # === Fonction principale ===
 def Analyse_stock():
     st.set_page_config(layout="wide")
@@ -567,9 +592,14 @@ def Analyse_stock():
     for name in expected_files:
         file_id = get_file_id_by_name(drive_service, name, folder_id=drive_folder_id)
         if not file_id:
-            st.error(f"Fichier introuvable sur Drive : {name}")
+            # Warning affiché directement par get_file_id_by_name, on continue ou on arrête
             return
         local_paths[name] = download_parquet_from_drive(drive_service, file_id)
+
+    # === Affichage dans Streamlit ===
+    st.success("Tous les fichiers ont été téléchargés avec succès.")
+    for name, path in local_paths.items():
+        st.write(f"{name} : {path}"
 
     # --- Lecture des fichiers parquet ---
     df_article_euros = pd.read_parquet(local_paths["article_euros.parquet"])
