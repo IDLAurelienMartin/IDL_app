@@ -1298,12 +1298,46 @@ tabs = {
     "Analyse Stock": Analyse_stock,
     "X3": tab_realisateurs
 }
+def download_drive_file(service, file_name, destination_path):
+    """
+    Télécharge un fichier depuis Google Drive en utilisant son nom.
+    
+    Args:
+        service: objet service Google Drive (build("drive", "v3", credentials=...))
+        file_name: nom du fichier sur Google Drive
+        destination_path: chemin local où enregistrer le fichier
+    """
+    # Récupérer l'ID du fichier par son nom
+    results = service.files().list(
+        q=f"name='{file_name}'",
+        spaces='drive',
+        fields='files(id, name)'
+    ).execute()
+    
+    items = results.get('files', [])
+    if not items:
+        print(f"Fichier {file_name} non trouvé sur Drive.")
+        return
+    
+    file_id = items[0]['id']
+    
+    request = service.files().get_media(fileId=file_id)
+    fh = io.FileIO(destination_path, 'wb')
+    downloader = MediaIoBaseDownload(fh, request)
+    
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+        if status:
+            print(f"Téléchargement {int(status.progress() * 100)}% de {file_name}...")
+    
+    print(f"Fichier téléchargé : {destination_path}")
 
 def main():
     # --- Authentification Google Drive ---
     service_json = os.environ.get("GOOGLE_SERVICE_JSON")
     if not service_json:
-        st.error("⚠️ Variable d'environnement GOOGLE_SERVICE_JSON manquante.")
+        st.error("Variable d'environnement GOOGLE_SERVICE_JSON manquante.")
         return
     creds = service_account.Credentials.from_service_account_info(
         json.loads(service_json),
@@ -1323,7 +1357,7 @@ def main():
         if logo_idl_path.exists():
             st.sidebar.image(str(logo_idl_path), use_container_width=True)
         else:
-            st.sidebar.warning("⚠️ Logo IDL non trouvé sur Drive")
+            st.sidebar.warning("Logo IDL non trouvé sur Drive")
 
         # --- Navigation ---
         st.sidebar.header("Navigation")
