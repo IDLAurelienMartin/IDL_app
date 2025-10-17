@@ -36,6 +36,7 @@ import pickle
 import os
 import io
 from googleapiclient.errors import HttpError
+from google.oauth2.credentials import Credentials as UserCredentials
 
 
 
@@ -432,122 +433,100 @@ def tab_QR_Codes():
 
 # === Fonction utilitaires ===
 
-# === Initialisation Google Drive (OAuth 2 Service Account) ===
+# --- Scopes Google Drive ---
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+# --- Token / Credentials ---
 TOKEN_FILE = "token.json"
-# === Fonction pour initialiser le service Google Drive ===
+
+
+# === Initialisation du service Google Drive ===
 def get_drive_service():
     """
     Initialise Google Drive API.
-    - Priorité 1 : Service Account via GOOGLE_OAUTH_CREDENTIALS_JSON
-    - Priorité 2 : OAuth utilisateur via credentials.json et token.json
-    Fonction compatible : local & Render
+    Priorité :
+        1. Service Account via GOOGLE_SERVICE_JSON
+        2. OAuth utilisateur via GOOGLE_DRIVE_TOKEN (JSON)
+    Compatible local & Render.
     """
-
     # --- Service Account ---
     service_json = os.environ.get("GOOGLE_SERVICE_JSON")
     if service_json:
         try:
             creds_info = json.loads(service_json)
+            creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
+            service = build("drive", "v3", credentials=creds)
+            st.info("Connexion Google Drive avec Service Account réussie.")
+            return service
         except Exception as e:
-            raise ValueError(f"Impossible de parser GOOGLE_SERVICE_JSON : {e}")
-        creds = ServiceAccountCredentials.from_service_account_info(creds_info, scopes=SCOPES)
-        service = build("drive", "v3", credentials=creds)
-        print("Connexion Google Drive avec Service Account réussie.")
-        return service
+            st.warning(f"Impossible de se connecter avec Service Account : {e}")
 
-    # --- Fallback local OAuth utilisateur ---
-    local_credentials_path = "IDL_DB/credentials.json"
-    if os.path.exists(local_credentials_path):
-        creds = None
-
-        # Vérifie si token existant
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, "rb") as token_file:
-                creds = pickle.load(token_file)
-
-        # Si pas de token valide, lancer le flow OAuth
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(local_credentials_path, SCOPES)
-
-                # ⚡ Détection environnement Render / Streamlit Cloud
-                if os.environ.get("RENDER") or os.environ.get("STREAMLIT_SERVER"):
-                    # Pas de navigateur dispo, on utilise le mode console
-                    creds = flow.run_console()
-                else:
-                    # Local avec navigateur
-                    creds = flow.run_local_server(port=8080)
-
-            # Sauvegarde automatique du token pour les prochaines exécutions
-            token_dir = os.path.dirname(TOKEN_FILE)
-            if token_dir:  # ne créer le dossier que si le chemin n'est pas vide
-                os.makedirs(token_dir, exist_ok=True)
-
-            with open(TOKEN_FILE, "wb") as token_file:
-                pickle.dump(creds, token_file)
-
-
-        service = build("drive", "v3", credentials=creds)
-        print("Connexion Google Drive via OAuth utilisateur réussie.")
-        return service
+    # --- OAuth utilisateur via token JSON stocké dans Render ---
+    token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
+    if token_json:
+        try:
+            creds_info = json.loads(token_json)
+            creds = UserCredentials.from_authorized_user_info(creds_info, SCOPES)
+            if not creds.valid:
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+            service = build("drive", "v3", credentials=creds)
+            st.info("Connexion Google Drive via OAuth utilisateur réussie.")
+            return service
+        except Exception as e:
+            st.warning(f"Impossible de se connecter via OAuth utilisateur : {e}")
 
     # --- Aucun moyen de se connecter ---
     raise ValueError(
         "Aucun identifiant Google Drive trouvé. "
-        "Définir GOOGLE_SERVICE_JSON ou créer 'IDL_DB/credentials.json'."
+        "Définir GOOGLE_SERVICE_JSON ou GOOGLE_DRIVE_TOKEN."
     )
 
-# === Initialisation ===
-drive_service = get_drive_service()
 
 # === Fonctions utilitaires Drive ===
-def download_parquet_from_drive(service, file_id):
-    request = service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        status, done = downloader.next_chunk()
-    fh.seek(0)
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".parquet")
-    with open(tmp_file.name, "wb") as f:
-        f.write(fh.read())
-    return tmp_file.name
 
-#--- Initialisation du service Drive via token OAuth depuis Render ---
-def get_drive_service_from_env():
-    token_pickle = os.environ.get("GOOGLE_DRIVE_TOKEN")
-    if not token_pickle:
-        raise ValueError("Le token OAuth n'est pas défini dans GOOGLE_DRIVE_TOKEN")
-    
-    # Convertir la string stockée en bytes pour pickle
-    creds = pickle.loads(token_pickle.encode("latin1"))
-    
-    # Construire le service Drive
-    service = build("drive", "v3", credentials=creds)
-    return service
-
-# --- Récupérer l'ID du fichier par nom dans un dossier ---
 def get_file_id_by_name(service, file_name, folder_id):
+    """
+    Cherche l'ID d'un fichier dans un dossier Drive donné par son nom.
+    Affiche un warning si le fichier n'est pas trouvé et liste tous les fichiers disponibles.
+    """
+    st.info(f"🔍 Recherche du fichier '{file_name}' dans le dossier Drive ID : {folder_id}")
     try:
-        query = f"'{folder_id}' in parents and name='{file_name}' and trashed=false"
-        results = service.files().list(q=query, fields="files(id, name)").execute()
-        items = results.get("files", [])
+        query = f"'{folder_id}' in parents and trashed=false and name='{file_name}'"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        items = results.get('files', [])
+
         if items:
-            return items[0]["id"]
-        return None
+            st.success(f"✅ Fichier trouvé : {file_name}")
+            return items[0]['id']
+        else:
+            st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name}")
+            all_files = service.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                spaces='drive',
+                fields='files(id, name)'
+            ).execute().get('files', [])
+            if all_files:
+                st.info("Fichiers disponibles dans ce dossier :")
+                for f in all_files:
+                    st.info(f"- {f['name']} (ID: {f['id']})")
+            else:
+                st.info("Aucun fichier trouvé dans ce dossier.")
+            return None
     except HttpError as e:
-        st.error("Erreur lors de la recherche du fichier:", e)
+        st.error(f"Erreur lors de la recherche du fichier : {e}")
         return None
 
-# --- Upload ou update d'un fichier ---
+
 def upload_or_update_file(service, local_path, file_name, folder_id):
-    file_id = get_file_id_by_name(service, file_name, folder_id)
-    media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
+    """
+    Upload un fichier sur Google Drive ou le met à jour s'il existe déjà.
+    Affiche les messages directement dans Streamlit.
+    """
     try:
+        file_id = get_file_id_by_name(service, file_name, folder_id)
+        media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
+
         if file_id:
             updated_file = service.files().update(fileId=file_id, media_body=media).execute()
             st.success(f"Fichier mis à jour : {file_name} (ID: {file_id})")
@@ -557,54 +536,63 @@ def upload_or_update_file(service, local_path, file_name, folder_id):
             created_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
             st.success(f"Fichier créé : {file_name} (ID: {created_file['id']})")
             return created_file["id"]
+
     except HttpError as e:
         st.error(f"Erreur Http lors de l'upload : {e.resp.status}")
-        st.error(f"Détails : {e.error_details}")
-        st.error(f"Contenu : {e.content}")
+        if hasattr(e, 'error_details'):
+            st.error(f"Détails : {e.error_details}")
+        if hasattr(e, 'content'):
+            st.error(f"Contenu : {e.content.decode() if isinstance(e.content, bytes) else e.content}")
         return None
-    
+    except Exception as ex:
+        st.error(f"Erreur inattendue : {ex}")
+        return None
+
+
+def download_parquet_from_drive(service, file_id):
+    """
+    Télécharge un fichier Parquet depuis Drive et retourne le chemin temporaire.
+    """
+    try:
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        fh.seek(0)
+
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".parquet")
+        with open(tmp_file.name, "wb") as f:
+            f.write(fh.read())
+        return tmp_file.name
+    except HttpError as e:
+        st.error(f"Erreur lors du téléchargement : {e}")
+        return None
+
+
 def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
-    q = f"name contains '{name_contains}' and trashed = false"
-    if folder_id:
-        q += f" and '{folder_id}' in parents"
-    results = service.files().list(
-        q=q, orderBy="createdTime desc", pageSize=1,
-        fields="files(id, name, createdTime)"
-    ).execute()
-    files = results.get("files", [])
-    return files[0] if files else None
-
-def get_file_id_by_name(service, file_name, folder_id):
     """
-    Cherche l'ID d'un fichier dans un dossier Drive donné par son nom.
-    Affiche un warning si le fichier n'est pas trouvé et liste tous les fichiers disponibles.
-    Indique également le dossier utilisé pour la recherche.
+    Récupère le dernier fichier Drive dont le nom contient `name_contains`.
     """
-    st.info(f"🔍 Recherche du fichier '{file_name}' dans le dossier Drive ID : {folder_id}")
-
-    query = f"'{folder_id}' in parents and trashed=false and name='{file_name}'"
-    results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-    items = results.get('files', [])
-
-    if items:
-        st.success(f"✅ Fichier trouvé : {file_name}")
-        return items[0]['id']
-    else:
-        # Fichier non trouvé → lister tous les fichiers pour debug
-        st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name} dans le dossier ID : {folder_id}")
-        all_files = service.files().list(
-            q=f"'{folder_id}' in parents and trashed=false",
-            spaces='drive',
-            fields='files(id, name)'
-        ).execute().get('files', [])
-
-        if all_files:
-            st.info("Fichiers disponibles dans ce dossier :")
-            for f in all_files:
-                st.info(f"- {f['name']} (ID: {f['id']})")
-        else:
-            st.info("Aucun fichier trouvé dans ce dossier.")
+    try:
+        q = f"name contains '{name_contains}' and trashed = false"
+        if folder_id:
+            q += f" and '{folder_id}' in parents"
+        results = service.files().list(
+            q=q, orderBy="createdTime desc", pageSize=1,
+            fields="files(id, name, createdTime)"
+        ).execute()
+        files = results.get("files", [])
+        return files[0] if files else None
+    except HttpError as e:
+        st.error(f"Erreur lors de la récupération du dernier fichier : {e}")
         return None
+
+
+# === Initialisation du service Drive ===
+drive_service = get_drive_service()
+
 
 # === Fonction principale ===
 def Analyse_stock():
