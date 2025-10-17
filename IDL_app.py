@@ -982,24 +982,7 @@ def Analyse_stock():
 
     # Sauvegarde et mise à jour de la session
     st.session_state.df_comments = df_comments
-
-    tmp_save = tempfile.NamedTemporaryFile(delete=False, suffix=".parquet")
-    tmp_save.close()
-    
-    st.session_state.df_comments.to_parquet(tmp_save.name, index=False)
-
-    # --- Upload ou mise à jour du fichier ---
-    uploaded_id = upload_or_update_file(
-            drive_service,
-            tmp_save.name,
-            "df_comments.parquet",
-            folder_id=drive_folder_id
-        )
-
-    if uploaded_id:
-        st.success("Parquet sauvegardé sur Google Drive")
-    else:
-        st.error("Échec de l'upload du parquet sur Drive")
+    df_comments.to_parquet(parquet_path, index=False)
 
     # --- Zone d’ajout/modification de commentaire ---
     mgb_text = f"{mgb_selected} - {stock_info.iloc[0]['Désignation'] if not stock_info.empty else ''}"
@@ -1110,6 +1093,10 @@ def Analyse_stock():
     # --------------------------
     if st.button("Générer le PDF du rapport"):
         df_for_pdf = st.session_state.df_comments.copy()
+        df_for_pdf = st.session_state.df_comments[
+            st.session_state.df_comments["Date_Dernier_Commentaire"].notna() &
+            (st.session_state.df_comments["Date_Dernier_Commentaire"] != "")
+        ].fillna("")
 
         # Fusion avec df_sorties pour ajouter la colonne 'Cellule'
         if 'df_sorties' in locals():
@@ -1134,16 +1121,13 @@ def Analyse_stock():
             df_for_pdf["Date_Dernier_Commentaire"], format="%d-%m-%Y", errors="coerce"
         )
 
-        df_for_pdf_comments = df_for_pdf[df_for_pdf["Date_Dernier_Commentaire"].notna() & 
-                                 (df_for_pdf["Date_Dernier_Commentaire"] != "")]
-    
         # Ordonner les lignes :
         # 1️ METRO par date croissante
         # 2️ IDL par date croissante
-        df_for_pdf_comments = pd.concat([
-            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "METRO"].sort_values("Date_Dernier_Commentaire_dt"),
-            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "IDL"].sort_values("Date_Dernier_Commentaire_dt"),
-            df_for_pdf_comments[df_for_pdf_comments["Choix_traitement"] == "XX"].sort_values("Date_Dernier_Commentaire_dt")
+        df_for_pdf = pd.concat([
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "METRO"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "IDL"].sort_values("Date_Dernier_Commentaire_dt"),
+            df_for_pdf[df_for_pdf["Choix_traitement"] == "XX"].sort_values("Date_Dernier_Commentaire_dt")
         ])
 
         col_widths = [15, 70, 15, 15, 15, 15, 20, 15, 105]
@@ -1426,21 +1410,21 @@ def main():
             st.sidebar.warning("⚠️ Logo Metro non trouvé sur Drive")
 
         # --- Bouton actualiser ---
-        if st.sidebar.button("Actualiser les données"):
-            with st.spinner("Exécution du script run_all.py..."):
-                script_path = Path(__file__).resolve().parent / "scripts" / "run_all.py"
-                try:
-                    result = subprocess.run(
-                        ["python", str(script_path)],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0:
-                        st.sidebar.success("✅ Actualisation terminée avec succès !")
-                    else:
-                        st.sidebar.error(f"⚠️ Erreur lors de l’exécution :\n{result.stderr}")
-                except Exception as e:
-                    st.sidebar.error(f"Erreur : {e}")
+        #if st.sidebar.button("Actualiser les données"):
+        #   with st.spinner("Exécution du script run_all.py..."):
+        #      script_path = Path(__file__).resolve().parent / "scripts" / "run_all.py"
+        #     try:
+        #        result = subprocess.run(
+        #           ["python", str(script_path)],
+        #          capture_output=True,
+        #         text=True
+        #    )
+        #            if result.returncode == 0:
+        #                st.sidebar.success("✅ Actualisation terminée avec succès !")
+        #            else:
+        #                st.sidebar.error(f"⚠️ Erreur lors de l’exécution :\n{result.stderr}")
+        #        except Exception as e:
+        #           st.sidebar.error(f"Erreur : {e}")
 
     # --- Styles Streamlit ---
     st.markdown("""
