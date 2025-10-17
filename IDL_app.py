@@ -523,9 +523,18 @@ def download_parquet_from_drive(service, file_id):
         f.write(fh.read())
     return tmp_file.name
 
+def get_drive_service_from_env():
+    token_pickle = os.environ.get("GOOGLE_DRIVE_TOKEN")
+    if not token_pickle:
+        raise ValueError("Le token OAuth n'est pas défini dans GOOGLE_DRIVE_TOKEN")
+
+    creds = pickle.loads(token_pickle.encode("latin1"))  # si stocké comme bytes picklé converti en str
+    return build("drive", "v3", credentials=creds)
+
 def upload_or_update_file(service, local_path, file_name, folder_id):
     file_id = get_file_id_by_name(service, file_name, folder_id)
     media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
+    
     if file_id:
         updated_file = service.files().update(fileId=file_id, media_body=media).execute()
         return updated_file["id"]
