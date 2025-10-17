@@ -431,7 +431,7 @@ def tab_QR_Codes():
 # === Fonction utilitaires ===
 
 # === Initialisation Google Drive (OAuth 2 Service Account) ===
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 TOKEN_FILE = "token.json"
 # === Fonction pour initialiser le service Google Drive ===
 def get_drive_service():
