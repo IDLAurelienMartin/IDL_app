@@ -439,25 +439,6 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 # --- Token / Credentials ---
 TOKEN_FILE = "token.json"
 
-# --- Dossier local miroir du partage réseau ---
-SYNC_FOLDERS = {
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\2 - Mvt Stock\1 - Compilation":
-        ("Mvt_stock", "1DRIVE_FOLDER_ID_MVT_STOCK"),
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\5 - Historique des Sorties\1 - Compilation":
-        ("Historique_des_Sorties", "1DRIVE_FOLDER_ID_SORTIES"),
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\6 - Historique Reception\1 - Compilation":
-        ("Historique_Reception", "1DRIVE_FOLDER_ID_RECEPTIONS"),
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\8 - Ecart MMS\2 - Archives":
-        ("Ecart_Stock", "1DRIVE_FOLDER_ID_ECART"),
-}
-
-SYNC_FILES = {
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\Article_euros.xlsx":
-        ("Article_euros.xlsx", "1DRIVE_FOLDER_ID_ROOT"),
-    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\Inventory_21_09_2025.xlsx":
-        ("Inventory_21_09_2025.xlsx", "1DRIVE_FOLDER_ID_ROOT"),
-}
-
 # --- Initialisation Drive ---
 drive_service = get_drive_service()
 
@@ -483,6 +464,7 @@ def is_local_newer(local_path: Path, drive_service, drive_folder_id, file_name: 
 def sync_folder(local_folder, drive_folder_id):
     local_folder = Path(local_folder)
     if not local_folder.exists():
+        st.warning(f"Dossier local introuvable : {local_folder}")
         return
 
     for file_path in local_folder.glob("*"):
@@ -500,6 +482,7 @@ def sync_files(files_dict):
     for local_path, (file_name, drive_folder_id) in files_dict.items():
         file_path = Path(local_path)
         if not file_path.exists():
+            st.warning(f"Fichier introuvable : {file_path}")
             continue
         if is_local_newer(file_path, drive_service, drive_folder_id, file_name):
             upload_or_update_file(
@@ -508,15 +491,6 @@ def sync_files(files_dict):
                 file_name=file_name,
                 folder_id=drive_folder_id
             )
-        
-# --- Lancement de la synchronisation ---
-
-for local_path, (label, drive_folder_id) in SYNC_FOLDERS.items():
-
-    sync_folder(local_path, drive_folder_id)
-
-sync_files(SYNC_FILES)
-
 
 # === Initialisation du service Google Drive ===
 def get_drive_service():
@@ -552,12 +526,14 @@ def get_file_id_by_name(service, file_name, folder_id):
         if items:
             return items[0]['id']
         else:
+            st.warning(f"⚠️ Fichier introuvable sur Drive : {file_name}")
             all_files = service.files().list(
                 q=f"'{folder_id}' in parents and trashed=false",
                 spaces='drive',
                 fields='files(id, name)'
             ).execute().get('files', [])
             if all_files:
+                st.info("Fichiers disponibles dans ce dossier :")
                 for f in all_files:
                     st.info(f"- {f['name']} (ID: {f['id']})")
             else:
@@ -632,7 +608,8 @@ def get_last_stock_file(service, folder_id=None, name_contains="ecart_stock"):
             fields="files(id, name, createdTime)"
         ).execute()
         files = results.get("files", [])
-        
+        if files:
+            st.info(f"Dernier fichier trouvé : {files[0]['name']} (ID: {files[0]['id']})")
         return files[0] if files else None
     except HttpError as e:
         st.error(f"Erreur lors de la récupération du dernier fichier : {e}")
@@ -665,18 +642,13 @@ def Analyse_stock():
     if not files:
         st.warning("Aucun fichier trouvé dans le dossier Drive.")
         return
-        # Créer une liste de noms de fichiers
-    expected_files = [f['name'] for f in files]
-
+        
     # === Télécharger tous les fichiers détectés ===
     local_paths = {}
     for file in files:
         file_name = file['name']
         file_id = file['id']
         local_paths[file_name] = download_parquet_from_drive(drive_service, file_id)
-
-    for name, path in local_paths.items():
-        st.write(f"{name} : {path}")
 
     # --- Lecture des fichiers parquet ---
     df_article_euros = pd.read_parquet(local_paths["article_euros.parquet"])
@@ -950,8 +922,6 @@ def Analyse_stock():
         st.stop()
 
     parquet_path = Path(tmp_parquet_path)
-    st.info(f"Dernier fichier parquet chargé depuis Drive : {file_name}")
-
     if not parquet_path.exists():
         st.warning(f"Fichier parquet introuvable : {parquet_path}")
         st.stop()
@@ -1030,8 +1000,6 @@ def Analyse_stock():
         st.success("Parquet sauvegardé sur Google Drive")
     else:
         st.error("Échec de l'upload du parquet sur Drive")
-
-    st.info(f"{len(df_consigne)} lignes 'Consigne' mises à jour ou ajoutées (présentes dans df_affiche) ✅")
 
     # --- Zone d’ajout/modification de commentaire ---
     mgb_text = f"{mgb_selected} - {stock_info.iloc[0]['Désignation'] if not stock_info.empty else ''}"
@@ -1249,7 +1217,7 @@ def Analyse_stock():
 
         pdf.set_font("Arial", "I", 9)
         pdf.set_x(x_offset)
-        pdf.cell(0, 6, "Les lignes non traitées ne figurent pas dans le rapport détaillé.", ln=True)
+        pdf.cell(0, 6, "Les lignes non affectées ne figurent pas dans le rapport détaillé.", ln=True)
 
         pdf.ln(4)
         pdf.set_font("Arial", "B", 12)
@@ -1264,29 +1232,9 @@ def Analyse_stock():
         mgb_last = set(df_ecart_stock_last["MGB_6"].astype(str))
         mgb_traite = mgb_prev - mgb_last
 
-        # Construire df_traite à partir de df_ecart_stock_prev
-        df_traite = df_comments[df_comments["MGB_6"].isin(mgb_traite)].copy()
-
-        # Ajouter la colonne Choix_traitement depuis df_temp (si existant)
-        df_traite = df_traite.merge(
-            df_temp[["MGB_6", "Choix_traitement"]],
-            on="MGB_6",
-            how="left"
-            )
-
-        # Lignes traitées = MGB présents dans df_temp et présents dans df_ecart_stock_prev
-        df_traite = df_temp[df_temp["MGB_6"].isin(df_ecart_stock_prev["MGB_6"].astype(str))].copy()
-
-        # Maintenant calculer les sous-totaux selon Choix_traitement
-        nb_met_traite = len(df_traite[df_traite["Choix_traitement"] == "METRO"])
-        nb_idl_traite = len(df_traite[df_traite["Choix_traitement"] == "IDL"])
-        nb_non_suivi_traite = len(mgb_traite)-(nb_met_traite + nb_idl_traite)
         nb_total_traite = len(mgb_traite)
 
         synthese_traite = [
-            ("METRO", str(nb_met_traite)),
-            ("IDL", str(nb_idl_traite)),
-            ("Non suivi", str(nb_non_suivi_traite)),
             ("Total lignes traitées", str(nb_total_traite))
         ]
 
@@ -1311,7 +1259,7 @@ def Analyse_stock():
         pdf.cell(0, 8, "Synthèse des retards de traitement", ln=True)
         pdf.set_font("Arial", "", 10)
 
-        # --- Tableau : lignes affectées depuis plus de 3, 6 et 10 jours ---
+                # --- Tableau : lignes affectées depuis plus de 3, 6 et 10 jours ---
         today_dt = datetime.today()
 
         df_retard = df_for_pdf[
@@ -1319,22 +1267,23 @@ def Analyse_stock():
             (df_for_pdf["Date_Dernier_Commentaire_dt"].notna())
         ]
 
-        nb_plus_3 = len(df_retard[(today_dt - df_retard["Date_Dernier_Commentaire_dt"]).dt.days > 3])
-        nb_plus_6 = len(df_retard[(today_dt - df_retard["Date_Dernier_Commentaire_dt"]).dt.days > 6])
-        nb_plus_10 = len(df_retard[(today_dt - df_retard["Date_Dernier_Commentaire_dt"]).dt.days > 10])
+        # Retards >3, >6, >10 jours séparés par type METRO/IDL
+        retard_data = []
+        for days in [3, 6, 10]:
+            df_days = df_retard[(today_dt - df_retard["Date_Dernier_Commentaire_dt"]).dt.days > days]
+            nb_met = len(df_days[df_days["Choix_traitement"] == "METRO"])
+            nb_idl = len(df_days[df_days["Choix_traitement"] == "IDL"])
+            retard_data.append((f"> {days} jours", str(nb_met), str(nb_idl)))
 
-
-        retard_data = [
-            ("> 3 jours", str(nb_plus_3)),
-            ("> 6 jours", str(nb_plus_6)),
-            ("> 10 jours", str(nb_plus_10))
-        ]
+        # Affichage du tableau
+        col_widths_retard = [90, 40, 40]  # Délai | METRO | IDL
 
         # Affichage du tableau
         pdf.set_fill_color(220, 220, 220)
         pdf.set_x(x_offset)
         pdf.cell(col_widths_syn2[0], 8, "Délai depuis dernier commentaire", border=1, align="C", fill=True)
-        pdf.cell(col_widths_syn2[1], 8, "Nombre", border=1, align="C", fill=True)
+        pdf.cell(col_widths_retard[1], 8, "METRO", border=1, align="C", fill=True)
+        pdf.cell(col_widths_retard[2], 8, "IDL", border=1, align="C", fill=True)
         pdf.ln()
 
         pdf.set_font("Arial", "", 9)
@@ -1342,9 +1291,10 @@ def Analyse_stock():
             pdf.set_x(x_offset)
             pdf.cell(col_widths_syn2[0], 8, row[0], border=1)
             pdf.cell(col_widths_syn2[1], 8, row[1], border=1, align="C")
+            pdf.cell(col_widths_retard[2], 8, row[2], border=1, align="C")
             pdf.ln()
 
-        pdf.ln(10)
+        pdf.ln()
 
 
         pdf.first_page = False  # Les pages suivantes auront les en-têtes
