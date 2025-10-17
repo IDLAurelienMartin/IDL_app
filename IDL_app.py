@@ -15,7 +15,7 @@ import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder
 from fpdf import FPDF
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 import subprocess
 import pickle
 # scripts/stock_analysis_drive.py
