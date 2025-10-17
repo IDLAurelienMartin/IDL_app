@@ -439,6 +439,93 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 # --- Token / Credentials ---
 TOKEN_FILE = "token.json"
 
+# --- Dossier local miroir du partage réseau ---
+SYNC_FOLDERS = {
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\2 - Mvt Stock\1 - Compilation":
+        ("Mvt_stock", "1DRIVE_FOLDER_ID_MVT_STOCK"),
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\5 - Historique des Sorties\1 - Compilation":
+        ("Historique_des_Sorties", "1DRIVE_FOLDER_ID_SORTIES"),
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\6 - Historique Reception\1 - Compilation":
+        ("Historique_Reception", "1DRIVE_FOLDER_ID_RECEPTIONS"),
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\8 - Ecart MMS\2 - Archives":
+        ("Ecart_Stock", "1DRIVE_FOLDER_ID_ECART"),
+}
+
+SYNC_FILES = {
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\Article_euros.xlsx":
+        ("Article_euros.xlsx", "1DRIVE_FOLDER_ID_ROOT"),
+    r"\\spwfs-metbre\Partage\07_Gestion_Des_Stocks\02 - Fichiers Synchro\1 - Fichiers a Actualiser\Inventory_21_09_2025.xlsx":
+        ("Inventory_21_09_2025.xlsx", "1DRIVE_FOLDER_ID_ROOT"),
+}
+
+# --- Initialisation Drive ---
+drive_service = get_drive_service()
+
+# --- Fonction utilitaire pour comparer dates ---
+def is_local_newer(local_path: Path, drive_service, drive_folder_id, file_name: str):
+    """
+    Retourne True si le fichier local est plus récent que celui sur Drive ou n'existe pas sur Drive.
+    """
+    file_id = get_file_id_by_name(drive_service, file_name, drive_folder_id)
+    if not file_id:
+        return True  # pas sur Drive → upload nécessaire
+
+    # Récupérer date du fichier Drive
+    file_meta = drive_service.files().get(fileId=file_id, fields="modifiedTime").execute()
+    drive_time = datetime.fromisoformat(file_meta["modifiedTime"].replace("Z", "+00:00"))
+
+    # Date fichier local
+    local_time = datetime.fromtimestamp(local_path.stat().st_mtime, tz=timezone.utc)
+
+    return local_time > drive_time
+
+# --- Synchronisation dossier ---
+def sync_folder(local_folder, drive_folder_id):
+    local_folder = Path(local_folder)
+    if not local_folder.exists():
+        st.warning(f"Dossier local introuvable : {local_folder}")
+        return
+
+    for file_path in local_folder.glob("*"):
+        if file_path.is_file():
+            if is_local_newer(file_path, drive_service, drive_folder_id, file_path.name):
+                upload_or_update_file(
+                    service=drive_service,
+                    local_path=str(file_path),
+                    file_name=file_path.name,
+                    folder_id=drive_folder_id
+                )
+            else:
+                st.info(f"✅ {file_path.name} est à jour sur Drive, pas besoin de mise à jour.")
+
+# --- Synchronisation fichiers uniques ---
+def sync_files(files_dict):
+    for local_path, (file_name, drive_folder_id) in files_dict.items():
+        file_path = Path(local_path)
+        if not file_path.exists():
+            st.warning(f"Fichier introuvable : {file_path}")
+            continue
+        if is_local_newer(file_path, drive_service, drive_folder_id, file_name):
+            upload_or_update_file(
+                service=drive_service,
+                local_path=str(file_path),
+                file_name=file_name,
+                folder_id=drive_folder_id
+            )
+        else:
+            st.info(f"✅ {file_name} est à jour sur Drive, pas besoin de mise à jour.")
+
+# --- Lancement de la synchronisation ---
+st.header("🔄 Synchronisation Google Drive")
+
+for local_path, (label, drive_folder_id) in SYNC_FOLDERS.items():
+    st.subheader(f"Dossier : {label}")
+    sync_folder(local_path, drive_folder_id)
+
+st.subheader("Fichiers uniques")
+sync_files(SYNC_FILES)
+
+st.success("✅ Synchronisation terminée !")
 
 # === Initialisation du service Google Drive ===
 def get_drive_service():
