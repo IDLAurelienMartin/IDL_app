@@ -8,6 +8,7 @@ from datetime import datetime
 import re
 import git
 from openpyxl import load_workbook
+import streamlit as st
 
 def load_data():
     """
@@ -29,7 +30,17 @@ def load_data():
     else:
         repo = git.Repo.clone_from(GIT_REPO_URL, base_dir, branch=GIT_BRANCH)
         print("Repo Git cloné depuis GitHub")
+    # === Dossier Parquet ===
+    cache_dir = base_dir / "Cache"
 
+    # === Lecture des Parquet ===
+    def load_parquet_safe(file_path: Path):
+        if file_path.exists():
+            return pd.read_parquet(file_path)
+        else:
+            st.warning(f"Impossible de charger {file_path.name} depuis GitHub / Cache")
+            return pd.DataFrame()
+        
     # === Dossiers / fichiers ===
     dossier_mvt_stock = base_dir / "Mvt_stock"
     dossier_reception = base_dir / "Historique_Reception"
