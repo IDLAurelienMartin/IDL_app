@@ -17,6 +17,9 @@ import subprocess
 from datetime import datetime
 import streamlit as st
 from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows   
+from git import Repo
+
+
 
 def tab_home():
     st.title("Accueil")
@@ -411,11 +414,11 @@ def tab_QR_Codes():
 
 
 # --- Dossier cache local sur Render ---
-CACHE_DIR = Path("cache")
+CACHE_DIR = Path("Cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 # --- URL GitHub pour les fichiers parquet initiaux ---
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/aumartin/idl_gd/main/data_parquet"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/aumartin/idl_gd/main/Cache"
 
 # --- Fonction pour charger parquet depuis cache ou GitHub ---
 def load_parquet(file_name):
@@ -635,7 +638,7 @@ tabs = {
 def main():
     
     # Nouveau dossier de base : ton OneDrive
-    onedrive_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL.git")
+    onedrive_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL")
 
     # Chemins des images dans ton OneDrive
     IMAGE_PATH_1 = onedrive_dir / "Images" / "logo_IDL.jpg"

@@ -12,15 +12,16 @@ import streamlit as st
 
 def load_data():
     """
-    Charge toutes les données Excel depuis GitHub sur Render.
-    Ne conserve que les fichiers postérieurs à la date de création réelle de l'inventaire.
-    Inclut les sous-dossiers.
+    Charge les données depuis GitHub sur Render.
+    1. Tente de charger les fichiers Parquet depuis Cache de Data_IDL.
+    2. Si certains Parquet sont manquants, lit les fichiers Excel récents.
+    3. Crée/actualise le cache Parquet pour Render.
     """
 
     # === Repo GitHub ===
     GIT_REPO_URL = "https://github.com/IDLAurelienMartin/Data_IDL.git"
-    GIT_BRANCH = "main"  # Branche à utiliser
-    base_dir = Path("/app/render_data_source")  # emplacement local sur Render
+    GIT_BRANCH = "main"
+    base_dir = Path("/app/render_data_source")
 
     # Cloner ou mettre à jour le repo
     if base_dir.exists():
@@ -30,17 +31,7 @@ def load_data():
     else:
         repo = git.Repo.clone_from(GIT_REPO_URL, base_dir, branch=GIT_BRANCH)
         print("Repo Git cloné depuis GitHub")
-    # === Dossier Parquet ===
-    cache_dir = base_dir / "Cache"
 
-    # === Lecture des Parquet ===
-    def load_parquet_safe(file_path: Path):
-        if file_path.exists():
-            return pd.read_parquet(file_path)
-        else:
-            st.warning(f"Impossible de charger {file_path.name} depuis GitHub / Cache")
-            return pd.DataFrame()
-        
     # === Dossiers / fichiers ===
     dossier_mvt_stock = base_dir / "Mvt_stock"
     dossier_reception = base_dir / "Historique_Reception"
@@ -49,68 +40,86 @@ def load_data():
     file_article = base_dir / "Article_euros.xlsx"
     file_inventaire = base_dir / "Inventory_21_09_2025.xlsx"
 
-    # === Dossier pour cache Parquet ===
+    # === Dossier Parquet / cache ===
     cache_dir = Path("/app/render_data")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_parquet_dir = base_dir / "Cache de Data_IDL"
 
-    # === Lecture de la date de référence ===
-    if not file_inventaire.exists():
-        raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
-
-    def get_excel_creation_date(file_path: Path) -> datetime:
-        wb = load_workbook(file_path, read_only=True)
-        props = wb.properties
-        wb.close()
-        return props.created or datetime.fromtimestamp(file_path.stat().st_ctime)
-
-    date_ref = get_excel_creation_date(file_inventaire)
-    print(f"Date de création réelle du contenu : {date_ref.strftime('%d/%m/%Y %H:%M')}")
-
-    # === Fonction récursive de concaténation ===
-    def concat_excel_from_folder(folder: Path, date_ref: datetime) -> pd.DataFrame:
-        if not folder.exists():
-            print(f"Dossier introuvable : {folder}")
+    # --- Fonction utilitaire pour charger un Parquet si présent ---
+    def load_parquet_safe(file_path: Path):
+        if file_path.exists():
+            return pd.read_parquet(file_path)
+        else:
+            st.warning(f"Parquet manquant : {file_path.name}, lecture des Excel à la place.")
             return pd.DataFrame()
 
-        fichiers = [
-            Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
-            if Path(f).stat().st_mtime > date_ref.timestamp()
-        ]
-        print(f"{len(fichiers)} fichier(s) récents trouvés dans {folder}")
-        if not fichiers:
-            return pd.DataFrame()
-        return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
+    # --- Lecture des Parquet depuis Cache ---
+    df_article_euros = load_parquet_safe(cache_parquet_dir / "article_euros.parquet")
+    df_inventaire = load_parquet_safe(cache_parquet_dir / "inventaire.parquet")
+    df_mvt_stock = load_parquet_safe(cache_parquet_dir / "mvt_stock.parquet")
+    df_reception = load_parquet_safe(cache_parquet_dir / "reception.parquet")
+    df_sorties = load_parquet_safe(cache_parquet_dir / "sorties.parquet")
+    df_ecart_stock_prev = load_parquet_safe(cache_parquet_dir / "ecart_stock_prev.parquet")
+    df_ecart_stock_last = load_parquet_safe(cache_parquet_dir / "ecart_stock_last.parquet")
 
-    # === Chargement des datasets ===
-    df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock, date_ref)
-    df_reception = concat_excel_from_folder(dossier_reception, date_ref)
-    df_sorties = concat_excel_from_folder(dossier_sorties, date_ref)
+    # === Si certains Parquet sont vides, lire les Excel récents ===
+    if df_inventaire.empty:
+        if not file_inventaire.exists():
+            raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
 
-    # === ECART STOCK ===
-    files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
-    if len(files) < 2:
-        raise FileNotFoundError(f"Pas assez de fichiers dans {dossier_ecart_stock} pour comparaison.")
-    file_prev, file_last = files[-2], files[-1]
+        def get_excel_creation_date(file_path: Path) -> datetime:
+            wb = load_workbook(file_path, read_only=True)
+            props = wb.properties
+            wb.close()
+            return props.created or datetime.fromtimestamp(file_path.stat().st_ctime)
 
-    df_ecart_stock_prev = pd.read_excel(file_prev)
-    df_ecart_stock_last = pd.read_excel(file_last)
+        date_ref = get_excel_creation_date(file_inventaire)
+        print(f"Date de création réelle du contenu : {date_ref.strftime('%d/%m/%Y %H:%M')}")
 
-    # === Fichiers de référence ===
-    df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
-    df_inventaire = pd.read_excel(file_inventaire)
+        # --- Fonction récursive pour concat Excel récents ---
+        def concat_excel_from_folder(folder: Path, date_ref: datetime) -> pd.DataFrame:
+            if not folder.exists():
+                print(f"Dossier introuvable : {folder}")
+                return pd.DataFrame()
+            fichiers = [
+                Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
+                if Path(f).stat().st_mtime > date_ref.timestamp()
+            ]
+            print(f"{len(fichiers)} fichier(s) récents trouvés dans {folder}")
+            if not fichiers:
+                return pd.DataFrame()
+            return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
 
-    # === Gestion du cache (Render) ===
+        df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock, date_ref) if df_mvt_stock.empty else df_mvt_stock
+        df_reception = concat_excel_from_folder(dossier_reception, date_ref) if df_reception.empty else df_reception
+        df_sorties = concat_excel_from_folder(dossier_sorties, date_ref) if df_sorties.empty else df_sorties
+
+        # --- ECART STOCK ---
+        files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
+        if len(files) >= 2:
+            file_prev, file_last = files[-2], files[-1]
+            df_ecart_stock_prev = pd.read_excel(file_prev) if df_ecart_stock_prev.empty else df_ecart_stock_prev
+            df_ecart_stock_last = pd.read_excel(file_last) if df_ecart_stock_last.empty else df_ecart_stock_last
+        else:
+            st.warning(f"Pas assez de fichiers dans {dossier_ecart_stock} pour comparaison.")
+
+        # --- Fichiers de référence ---
+        df_article_euros = pd.read_excel(file_article) if df_article_euros.empty and file_article.exists() else df_article_euros
+        df_inventaire = pd.read_excel(file_inventaire) if df_inventaire.empty else df_inventaire
+
+    # --- Gestion du cache Parquet final ---
     file_last_parquet = cache_dir / "ecart_stock_last.parquet"
     file_last_txt = cache_dir / "file_last.txt"
     with open(file_last_txt, "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
 
-    # === Synthèse ===
+    # --- Synthèse ---
     print("\n=== SYNTHÈSE DU CHARGEMENT ===")
     print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
     print(f"Réception : {len(df_reception)} lignes")
     print(f"Sorties   : {len(df_sorties)} lignes")
-    print(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
+    print(f"Ecart_Stock_prev : {len(df_ecart_stock_prev)} lignes")
+    print(f"Ecart_Stock_last : {len(df_ecart_stock_last)} lignes")
     print(f"Article_euros : {len(df_article_euros)} lignes")
     print(f"Inventaire : {len(df_inventaire)} lignes")
 
@@ -124,7 +133,6 @@ def load_data():
         df_article_euros,
         file_last_parquet,
     )
-
 
 # =========================
 # === PREPROCESSING
