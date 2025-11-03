@@ -4,6 +4,52 @@ from pathlib import Path
 import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
+import shutil
+from datetime import datetime
+import subprocess
+import platform
+import os
+
+# ===============================================
+# Configuration des chemins selon l'OS
+# ===============================================
+if platform.system() == "Windows":
+    # Windows local
+    SOURCE_FOLDER = Path(r"C:\Users\aumartin\Google Drive\DossierPartage")
+    DEST_FOLDER = Path(r"C:\Users\aumartin\Desktop\VSCode\Data_app")
+else:
+    # Linux / Render.com
+    # Remplacer par le chemin du dossier monté ou cloné sur Render
+    SOURCE_FOLDER = Path("/mnt/drive/DossierPartage")  # exemple avec rclone
+    DEST_FOLDER = Path("/opt/render/project/src/Data_app")
+
+def backup_to_github(source_path, dest_path, branch="main"):
+    """
+    Copie les fichiers depuis source_path vers dest_path,
+    commit et push sur GitHub.
+    """
+    source = Path(source_path)
+    dest = Path(dest_path)
+
+    # Copier les fichiers
+    shutil.copytree(source, dest, dirs_exist_ok=True)
+    print(f"Fichiers copiés de {source} vers {dest}")
+
+    # Horodatage pour le commit
+    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Ajouter tous les fichiers
+    subprocess.run(["git", "add", "."], cwd=dest, check=True)
+
+    # Commit, ignore si aucun changement
+    try:
+        subprocess.run(["git", "commit", "-m", f"Backup automatique {now}"], cwd=dest, check=True)
+    except subprocess.CalledProcessError:
+        print("Aucun changement à committer.")
+
+    # Push vers GitHub
+    subprocess.run(["git", "push", "origin", branch], cwd=dest, check=True)
+    print("Sauvegarde et push GitHub terminés !")
 
 def ajouter_totaux(df, colonnes_totaux):
     if df.empty:
@@ -100,3 +146,4 @@ def prepare_stock_data():
 
 if __name__ == "__main__":
     prepare_stock_data()
+    backup_to_github(SOURCE_FOLDER, DEST_FOLDER)

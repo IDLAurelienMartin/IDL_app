@@ -6,28 +6,40 @@ from pathlib import Path
 import sys
 from datetime import datetime
 import re
+import git
 from openpyxl import load_workbook
 
-# =========================
-# === CHARGEMENT DES DONNÉES
-# =========================
 def load_data():
     """
-    Charge toutes les données Excel depuis le dossier local Render.
+    Charge toutes les données Excel depuis GitHub sur Render.
     Ne conserve que les fichiers postérieurs à la date de création réelle de l'inventaire.
     Inclut les sous-dossiers.
     """
 
-    # === Dossiers locaux Render ===
-    base_dir = Path("/app/render_data_source")  # dossier où Excel bruts sont déposés
+    # === Repo GitHub ===
+    GIT_REPO_URL = "https://github.com/IDLAurelienMartin/Data_IDL.git"
+    GIT_BRANCH = "main"  # Branche à utiliser
+    base_dir = Path("/app/render_data_source")  # emplacement local sur Render
+
+    # Cloner ou mettre à jour le repo
+    if base_dir.exists():
+        repo = git.Repo(base_dir)
+        repo.remotes.origin.pull(GIT_BRANCH)
+        print("Repo Git mis à jour depuis GitHub")
+    else:
+        repo = git.Repo.clone_from(GIT_REPO_URL, base_dir, branch=GIT_BRANCH)
+        print("Repo Git cloné depuis GitHub")
+
+    # === Dossiers / fichiers ===
     dossier_mvt_stock = base_dir / "Mvt_stock"
     dossier_reception = base_dir / "Historique_Reception"
     dossier_sorties = base_dir / "Historique_des_Sorties"
     dossier_ecart_stock = base_dir / "Ecart_Stock"
     file_article = base_dir / "Article_euros.xlsx"
     file_inventaire = base_dir / "Inventory_21_09_2025.xlsx"
-    cache_dir = Path("/app/render_data")  # dossier Render pour Parquet
 
+    # === Dossier pour cache Parquet ===
+    cache_dir = Path("/app/render_data")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # === Lecture de la date de référence ===
@@ -82,6 +94,7 @@ def load_data():
     with open(file_last_txt, "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
 
+    # === Synthèse ===
     print("\n=== SYNTHÈSE DU CHARGEMENT ===")
     print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
     print(f"Réception : {len(df_reception)} lignes")
