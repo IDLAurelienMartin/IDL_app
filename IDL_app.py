@@ -635,7 +635,7 @@ tabs = {
 def main():
     
     # Nouveau dossier de base : ton OneDrive
-    onedrive_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app")
+    onedrive_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL.git")
 
     # Chemins des images dans ton OneDrive
     IMAGE_PATH_1 = onedrive_dir / "Images" / "logo_IDL.jpg"
