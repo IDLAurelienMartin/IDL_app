@@ -14,7 +14,7 @@ import io
 
 # === PARAMÈTRES GLOBAUX ===
 GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/"
-RENDER_CACHE = Path("/app/render_data/Cache")  # Dossier local Render
+RENDER_CACHE = Path("/opt/render/project/src/render_cache") # Dossier local Render
 RENDER_CACHE.mkdir(parents=True, exist_ok=True)
 
 # === Liste des fichiers distants GitHub ===
