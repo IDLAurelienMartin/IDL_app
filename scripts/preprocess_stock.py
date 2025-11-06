@@ -35,7 +35,7 @@ def download_from_github(file_path: str) -> io.BytesIO:
         with urllib.request.urlopen(url) as response:
             return io.BytesIO(response.read())
     except Exception as e:
-        print(f"⚠️ Impossible de charger {file_path} depuis GitHub : {e}")
+        print(f"Impossible de charger {file_path} depuis GitHub : {e}")
         return None
 
 
@@ -57,7 +57,7 @@ def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame
     # Dans cette version simplifiée : on s’attend à un dossier cloné dans Render pour la vitesse
     local_folder = RENDER_CACHE / subfolder.strip("/")
     if not local_folder.exists():
-        print(f"⚠️ Dossier non trouvé localement : {local_folder}")
+        print(f"Dossier non trouvé localement : {local_folder}")
         return pd.DataFrame()
 
     fichiers = [
@@ -78,7 +78,7 @@ def load_data_hybride():
     # === RÉFÉRENCE INVENTAIRE ===
     file_inventaire = RENDER_CACHE / FILES["inventaire"]
     if not file_inventaire.exists():
-        print(f"⬇️ Téléchargement du fichier inventaire depuis GitHub…")
+        print(f"Téléchargement du fichier inventaire depuis GitHub…")
         flux = download_from_github(FILES["inventaire"])
         if flux:
             with open(file_inventaire, "wb") as f:
@@ -87,20 +87,20 @@ def load_data_hybride():
             raise FileNotFoundError("Inventaire introuvable sur GitHub.")
 
     date_ref = get_excel_creation_date(file_inventaire)
-    print(f"📅 Date de référence (inventaire) : {date_ref.strftime('%d/%m/%Y %H:%M')}")
+    print(f"Date de référence (inventaire) : {date_ref.strftime('%d/%m/%Y %H:%M')}")
 
     # === CHARGEMENT DES PARQUET ===
     def load_parquet_or_excel(name: str, subfolder: str) -> pd.DataFrame:
         parquet_file = RENDER_CACHE / f"{name}.parquet"
         if parquet_file.exists():
-            print(f"✅ Chargement {name}.parquet depuis Render Cache")
+            print(f"Chargement {name}.parquet depuis Render Cache")
             return pd.read_parquet(parquet_file)
         else:
-            print(f"⚙️ Aucun parquet trouvé pour {name}, lecture Excel GitHub…")
+            print(f"Aucun parquet trouvé pour {name}, lecture Excel GitHub…")
             df = concat_excel_from_github(subfolder, date_ref)
             if not df.empty:
                 df.to_parquet(parquet_file, index=False)
-                print(f"💾 {name}.parquet créé dans {RENDER_CACHE}")
+                print(f"{name}.parquet créé dans {RENDER_CACHE}")
             return df
 
     df_mvt_stock = load_parquet_or_excel("mvt_stock", FILES["mvt_stock"])
@@ -111,7 +111,7 @@ def load_data_hybride():
     dossier_ecart_stock = RENDER_CACHE / "Ecart_Stock"
     files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
     if len(files) < 2:
-        print(f"⚠️ Pas assez de fichiers dans {dossier_ecart_stock}")
+        print(f"Pas assez de fichiers dans {dossier_ecart_stock}")
         df_ecart_stock_prev = df_ecart_stock_last = pd.DataFrame()
     else:
         file_prev, file_last = files[-2], files[-1]
@@ -123,7 +123,7 @@ def load_data_hybride():
     # === FICHIERS DE RÉFÉRENCE ===
     file_article = RENDER_CACHE / FILES["article"]
     if not file_article.exists():
-        print(f"⬇️ Téléchargement article depuis GitHub…")
+        print(f"Téléchargement article depuis GitHub…")
         flux = download_from_github(FILES["article"])
         if flux:
             with open(file_article, "wb") as f:

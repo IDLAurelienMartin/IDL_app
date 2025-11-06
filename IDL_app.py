@@ -636,28 +636,13 @@ tabs = {
 }
 
 def main():
-    
-    # Nouveau dossier de base : ton OneDrive
-    onedrive_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL")
-
-    # Chemins des images dans ton OneDrive
-    IMAGE_PATH_1 = onedrive_dir / "Images" / "logo_IDL.jpg"
-    IMAGE_PATH_2 = onedrive_dir / "Images" / "Logo_Metro.webp"
-
-    # Vérification d’existence (pour éviter les erreurs Streamlit si un fichier manque)
-    if IMAGE_PATH_1.exists():
-        st.sidebar.image(str(IMAGE_PATH_1), use_container_width=True)
-    else:
-        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_1}")
+    st.sidebar.image("https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/Images/logo_IDL.jpg")
 
     st.sidebar.header("Navigation")
     selected_tab = st.sidebar.radio("", list(tabs.keys()))
     tabs[selected_tab]()
 
-    if IMAGE_PATH_2.exists():
-        st.sidebar.image(str(IMAGE_PATH_2), use_container_width=True)
-    else:
-        st.sidebar.warning(f"⚠️ Image non trouvée : {IMAGE_PATH_2}")
+    st.sidebar.image("https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/Images/Logo_Metro.webp")
 
      # --- Bouton actualiser ---
     if st.sidebar.button("Actualiser les données"):
