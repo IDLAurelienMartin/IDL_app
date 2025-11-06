@@ -15,15 +15,8 @@ from preprocess_stock import load_data_hybride, preprocess_data
 # ===============================================
 # Configuration des chemins selon l'environnement
 # ===============================================
-if platform.system() == "Windows":
-    # En local (Windows)
-    SOURCE_FOLDER = Path(r"C:\Users\aumartin\Google Drive\DossierPartage")
-    DEST_FOLDER = Path(r"C:\Users\aumartin\Desktop\VSCode\Data_app")
-else:
-    # Sur Render.com
-    # On utilise le dossier cloné par run_all.py
-    SOURCE_FOLDER = Path("/opt/render/project/src/Cache")
-    DEST_FOLDER = Path("/opt/render/project/src/Data_app")
+SOURCE_FOLDER = Path("/opt/render/project/src/render_cache")
+DEST_FOLDER = Path("/opt/render/project/src/Data_app")
 
 def backup_to_github(source_path, dest_path, branch="main"):
     """Copie les fichiers depuis source_path vers dest_path, commit et push sur GitHub."""
