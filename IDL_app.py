@@ -603,22 +603,34 @@ def Analyse_stock():
     # --- Ajout commentaire ---
     st.subheader("Commentaires")
     comment_file = CACHE_DIR / f"{mgb_selected}_commentaires.parquet"
-    if comment_file.exists():
-        df_comments = pd.read_parquet(comment_file)
-    else:
-        df_comments = pd.DataFrame(columns=["MGB_6","Commentaire","Date"])
-    
+
+    # Charger ou créer le DataFrame dans session_state
+    if "df_comments" not in st.session_state:
+        if comment_file.exists():
+            st.session_state.df_comments = pd.read_parquet(comment_file)
+        else:
+            st.session_state.df_comments = pd.DataFrame(columns=[
+                "MGB_6", "Commentaire", "Date", "Date_Dernier_Commentaire",
+                "Choix_traitement", "IDL_auto"
+            ])
+
     new_comment = st.text_input("Ajouter un commentaire")
+
     if st.button("Enregistrer commentaire"):
         if new_comment.strip():
-            df_comments = pd.concat([df_comments, pd.DataFrame({
-                "MGB_6":[mgb_selected],
-                "Commentaire":[new_comment],
-                "Date":[today]
-            })], ignore_index=True)
-            save_parquet(df_comments, f"{mgb_selected}_commentaires.parquet")
+            st.session_state.df_comments = pd.concat([
+                st.session_state.df_comments,
+                pd.DataFrame({
+                    "MGB_6": [mgb_selected],
+                    "Commentaire": [new_comment],
+                    "Date": [today]
+                })
+            ], ignore_index=True)
+            save_parquet(st.session_state.df_comments, f"{mgb_selected}_commentaires.parquet")
 
-    st.dataframe(df_comments[df_comments["MGB_6"]==mgb_selected])
+    # Affichage filtré
+    st.dataframe(st.session_state.df_comments[st.session_state.df_comments["MGB_6"]==mgb_selected])
+
     
     # --- Attribution automatique IDL pour les quantités < 1 (valeur absolue) ---
     df_auto_idl = df_ecart_stock_last[df_ecart_stock_last["Difference_MMS-WMS"].abs() < 1].copy()
