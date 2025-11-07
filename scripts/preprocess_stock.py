@@ -24,7 +24,8 @@ FILES = {
     "mvt_stock": "Mvt_stock/",
     "reception": "Historique_Reception/",
     "sorties": "Historique_des_Sorties/",
-    "ecart_stock": "Ecart_Stock/"
+    "ecart_stock": "Ecart_Stock/",
+    "file_last" :"file_last.txt"
 }
 
 
