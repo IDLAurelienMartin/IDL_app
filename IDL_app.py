@@ -22,9 +22,6 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
-
-
-
 def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
@@ -422,7 +419,7 @@ CACHE_DIR = Path("Cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 # --- URL GitHub pour les fichiers parquet initiaux ---
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/aumartin/idl_gd/main/Cache"
+GITHUB_RAW_URL = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Cache"
 
 # --- Fonction pour charger parquet depuis cache ou GitHub ---
 def load_parquet(file_name):
