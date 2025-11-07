@@ -454,8 +454,15 @@ def Analyse_stock():
     df_sorties       = load_parquet("sorties.parquet")
     df_ecart_stock_prev = load_parquet("ecart_stock_prev.parquet")
     df_ecart_stock_last = load_parquet("ecart_stock_last.parquet")
+    
+    # voir les fichier dans le cache render
+    cache_dir = Path("/opt/render/project/src/render_cache")
+    st.write("Fichiers dans render_cache :", list(cache_dir.glob("*")))
 
-# 🔧 Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
+    tmp_dir = Path("/tmp")
+    st.write("Fichiers dans /tmp :", list(tmp_dir.glob("*")))
+
+    # 🔧 Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
     for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
         if "MGB_6" in df.columns:
             df["MGB_6"] = df["MGB_6"].astype(str).str.strip().str.replace(" ", "")
