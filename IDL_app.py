@@ -455,14 +455,7 @@ def Analyse_stock():
     df_ecart_stock_prev = load_parquet("ecart_stock_prev.parquet")
     df_ecart_stock_last = load_parquet("ecart_stock_last.parquet")
     
-    # voir les fichier dans le cache render
-    cache_dir = Path("/opt/render/project/src/render_cache")
-    st.write("Fichiers dans render_cache :", list(cache_dir.glob("*")))
-
-    tmp_dir = Path("/tmp")
-    st.write("Fichiers dans /tmp :", list(tmp_dir.glob("*")))
-
-    # 🔧 Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
+    # Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
     for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
         if "MGB_6" in df.columns:
             df["MGB_6"] = df["MGB_6"].astype(str).str.strip().str.replace(" ", "")
@@ -470,7 +463,7 @@ def Analyse_stock():
     # --- Interface principale Streamlit ---
     st.title("Analyse des écarts de stock")
 
-    # 🔧 Préparation légère ou ajustements (si nécessaires)
+    # Préparation légère ou ajustements (si nécessaires)
     if not df_mvt_stock.empty:
         df_mvt_stock['Emplacement'] = df_mvt_stock.apply(update_emplacement, axis=1)
         df_mvt_stock = df_mvt_stock.drop(columns=['prefix_emplacement'], errors='ignore')
@@ -687,10 +680,16 @@ def Analyse_stock():
     # separation :
     st.divider()
 
-    # --- Lecture du chemin du dernier fichier parquet ---
-    onedrive_cache_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
-    file_last_txt = onedrive_cache_dir / "file_last.txt"
 
+    # --- Lecture du chemin du dernier fichier parquet ---
+    render_cache_dir = Path("/opt/render/project/src/render_cache")
+    file_last_txt = render_cache_dir / "file_last.txt"
+
+    cache_dir = Path("/opt/render/project/src/render_cache")
+    st.write("Fichiers dans render_cache :", list(cache_dir.glob("*")))
+
+    tmp_dir = Path("/tmp")
+    st.write("Fichiers dans /tmp :", list(tmp_dir.glob("*")))
 
     file_last = None
     if file_last_txt.exists():
