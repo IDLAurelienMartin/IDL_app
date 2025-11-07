@@ -18,6 +18,10 @@ from datetime import datetime
 import streamlit as st
 from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows   
 from git import Repo
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
 
 
 
@@ -485,7 +489,7 @@ def Analyse_stock():
     cols = st.columns(5)
     options_1 = ["Toutes", "Positives", "Négatives", "Zéro"]
     options_2 = ["Tous", "Oui", "Non"]
-    options_3 = ["Toutes","<5","5-10","10-15","15-20","20+"]
+    options_3 = ["Toutes","<1","1-5","5-10","10-15","15-20","20+"]
     options_4 = ["Toutes", "Positives", "Zéro"]
     options_5 = ["Toutes", "Positives", "Négatives"]
 
@@ -547,7 +551,14 @@ def Analyse_stock():
             elif val == "Non":
                 df_filtered = df_filtered[df_filtered[df_col] != True]
         elif filt["type"] == "range":
-            ranges = {"<5": (0,5),"5-10": (5,10),"10-15":(10,15),"15-20":(15,20),"20+":(20,float("inf"))}
+            ranges = {
+                "<1": (0,1),
+                "1-5": (1, 5),
+                "5-10": (5, 10),
+                "10-15": (10, 15),
+                "15-20": (15, 20),
+                "20+": (20, float("inf"))
+            }
             if val in ranges:
                 low, high = ranges[val]
                 df_filtered = df_filtered[(df_filtered[df_col].abs()>=low)&(df_filtered[df_col].abs()<high)]
@@ -611,18 +622,84 @@ def Analyse_stock():
             save_parquet(df_comments, f"{mgb_selected}_commentaires.parquet")
 
     st.dataframe(df_comments[df_comments["MGB_6"]==mgb_selected])
+    
+    # --- Attribution automatique IDL pour les quantités < 1 (valeur absolue) ---
+    df_auto_idl = df_ecart_stock_last[df_ecart_stock_last["Difference_MMS-WMS"].abs() < 1].copy()
+    today_str = datetime.today().strftime("%d-%m-%Y")
 
+    for _, row in df_auto_idl.iterrows():
+        mgb = str(row["MGB_6"])
+        if mgb in st.session_state.df_comments["MGB_6"].values:
+            st.session_state.df_comments.loc[
+                st.session_state.df_comments["MGB_6"] == mgb,
+                ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]
+            ] = ["Régul à faire quantité inferieur à 1", today_str, "IDL", True]
+        else:
+            new_row = {
+                "MGB_6": mgb,
+                "Commentaire": "Régul à faire quantité inferieur à 1",
+                "Date_Dernier_Commentaire": today_str,
+                "Choix_traitement": "IDL",
+                "IDL_auto": True
+            }
+            st.session_state.df_comments = pd.concat(
+                [st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True
+            )
+
+    # Pour les autres lignes, s'assurer que IDL_auto existe
+    if "IDL_auto" not in st.session_state.df_comments.columns:
+        st.session_state.df_comments["IDL_auto"] = False
+
+    #-----------------------
     # --- Génération PDF ---
-    if st.button("Exporter PDF"):
-        pdf_file = CACHE_DIR / f"Stock_{mgb_selected}_{today.replace('/','-')}.pdf"
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0,10,f"Analyse Stock MGB {mgb_selected} - {today}", ln=True)
-        for idx, row in stock_info.iterrows():
-            pdf.cell(0,10,f"{row['MGB_6']} | MMS: {row['MMS_Stock']} | WMS: {row['WMS_Stock']} | Diff: {row['Difference_MMS-WMS']}", ln=True)
-        pdf.output(str(pdf_file))
-        st.success(f"PDF généré : {pdf_file}")
+    #-----------------------
+
+    if st.button("Générer le rapport PDF"):
+        if st.session_state.df_comments is not None and not st.session_state.df_comments.empty:
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            elements.append(Paragraph("<b>Rapport des Commentaires sur les Écarts de Stock</b>", styles["Title"]))
+            elements.append(Spacer(1, 12))
+
+            # Table des commentaires
+            data = [["MGB_6", "Commentaire"]]
+            for _, row in st.session_state.df_comments.iterrows():
+                data.append([str(row.get("MGB_6", "")), str(row.get("Commentaire", ""))])
+
+            table = Table(data, colWidths=[150, 350])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]))
+            elements.append(table)
+            doc.build(elements)
+
+            # Sauvegarde dans le dossier Render Cache
+            file_last_txt = Path("/opt/render/project/src/render_cache/file_last.txt")
+            if file_last_txt.exists():
+                with open(file_last_txt, "r") as f:
+                    last_path = Path(f.read().strip())
+            else:
+                last_path = Path("/opt/render/project/src/render_cache")
+
+            pdf_path = last_path / "Rapport_Ecart_Stock.pdf"
+            pdf_path.write_bytes(buffer.getvalue())
+
+            st.success(f"Rapport PDF généré : {pdf_path.name}")
+            st.download_button(
+                "Télécharger le rapport PDF",
+                data=buffer.getvalue(),
+                file_name="Rapport_Ecart_Stock.pdf",
+                mime="application/pdf",
+            )
+        else:
+            st.warning("Aucun commentaire à inclure dans le rapport PDF.")
 
 def tab_realisateurs():
     st.title("Réalisateurs")
