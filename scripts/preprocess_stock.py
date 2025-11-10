@@ -45,7 +45,7 @@ def get_excel_creation_date(file_path: Path) -> datetime:
     wb = load_workbook(file_path, read_only=True)
     props = wb.properties
     wb.close()
-    return props.created or datetime.fromtimestamp(file_path.stat().st_ctime)
+    return props.created or datetime.fromtimestamp(file_path.stat().st_mtime)
 
 def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame:
     url_base = GITHUB_BASE + subfolder
@@ -60,10 +60,12 @@ def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame
     fichiers = []
     for item in response.json():
         if item["name"].endswith(".xlsx"):
-            url = item["download_url"]
-            flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
-            if flux:
-                fichiers.append(pd.read_excel(flux))
+            file_date = datetime.strptime(item["git_url"][-20:-10], "%d_%m_%Y")  # exemple si tu peux extraire date du nom
+            if file_date and file_date > date_ref:
+                url = item["download_url"]
+                flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
+                if flux:
+                    fichiers.append(pd.read_excel(flux))
 
     if not fichiers:
         return pd.DataFrame()
