@@ -73,65 +73,82 @@ def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame
     return pd.concat(fichiers, ignore_index=True)
 
 def load_data_hybride():
-    """Charge les données avec la logique hybride GitHub + cache local Render."""
+    """Charge les données avec la logique hybride GitHub + cache local Render (tout en parquet)."""
 
-    # === RÉFÉRENCE INVENTAIRE ===
-    file_inventaire = RENDER_CACHE / FILES["inventaire"]
-    if not file_inventaire.exists():
-        print(f"Téléchargement du fichier inventaire depuis GitHub…")
-        flux = download_from_github(FILES["inventaire"])
-        if flux:
-            with open(file_inventaire, "wb") as f:
-                f.write(flux.getbuffer())
-        else:
-            raise FileNotFoundError("Inventaire introuvable sur GitHub.")
+    # --- Répertoire cache
+    RENDER_CACHE.mkdir(parents=True, exist_ok=True)
 
-    date_ref = get_excel_creation_date(file_inventaire)
-    print(f"Date de référence (inventaire) : {date_ref.strftime('%d/%m/%Y %H:%M')}")
+    # === INVENTAIRE ===
+    file_inventaire_xlsx = RENDER_CACHE / FILES["inventaire"]
+    parquet_inventaire = RENDER_CACHE / "inventaire.parquet"
 
-    # === CHARGEMENT DES PARQUET ===
+    if not parquet_inventaire.exists():
+        if not file_inventaire_xlsx.exists():
+            print("Téléchargement inventaire depuis GitHub...")
+            flux = download_from_github(FILES["inventaire"])
+            if flux:
+                file_inventaire_xlsx.write_bytes(flux.getbuffer())
+        df_inventaire = pd.read_excel(file_inventaire_xlsx)
+        df_inventaire.to_parquet(parquet_inventaire, index=False)
+        file_inventaire_xlsx.unlink(missing_ok=True)  # supprime le xlsx
+    else:
+        df_inventaire = pd.read_parquet(parquet_inventaire)
+
+    # === ARTICLE ===
+    file_article_xlsx = RENDER_CACHE / FILES["article"]
+    parquet_article = RENDER_CACHE / "article_euros.parquet"
+
+    if not parquet_article.exists():
+        if not file_article_xlsx.exists():
+            print("Téléchargement article depuis GitHub...")
+            flux = download_from_github(FILES["article"])
+            if flux:
+                file_article_xlsx.write_bytes(flux.getbuffer())
+        df_article_euros = pd.read_excel(file_article_xlsx)
+        df_article_euros.to_parquet(parquet_article, index=False)
+        file_article_xlsx.unlink(missing_ok=True)
+    else:
+        df_article_euros = pd.read_parquet(parquet_article)
+
+    # --- Date référence pour filtrer les autres fichiers Excel
+    date_ref = get_excel_creation_date(parquet_inventaire)
+
+    # === FONCTION UTILITAIRE POUR CHARGER LES PARQUET OU CONVERTIR LES EXCELS GITHUB POSTÉRIEURS À date_ref
     def load_parquet_or_excel(name: str, subfolder: str) -> pd.DataFrame:
         parquet_file = RENDER_CACHE / f"{name}.parquet"
         if parquet_file.exists():
             print(f"Chargement {name}.parquet depuis Render Cache")
             return pd.read_parquet(parquet_file)
-        else:
-            print(f"Aucun parquet trouvé pour {name}, lecture Excel GitHub…")
-            df = concat_excel_from_github(subfolder, date_ref)
-            if not df.empty:
-                df.to_parquet(parquet_file, index=False)
-                print(f"{name}.parquet créé dans {RENDER_CACHE}")
-            return df
+
+        print(f"Aucun parquet trouvé pour {name}, lecture Excel GitHub…")
+        df = concat_excel_from_github(subfolder, date_ref)
+        if not df.empty:
+            df.to_parquet(parquet_file, index=False)
+            print(f"{name}.parquet créé dans {RENDER_CACHE}")
+        return df
 
     df_mvt_stock = load_parquet_or_excel("mvt_stock", FILES["mvt_stock"])
     df_reception = load_parquet_or_excel("reception", FILES["reception"])
     df_sorties = load_parquet_or_excel("sorties", FILES["sorties"])
 
-    # === ECART STOCK (comparaison des deux derniers fichiers) ===
+    # === ECART STOCK ===
+    parquet_ecart_prev = RENDER_CACHE / "ecart_stock_prev.parquet"
+    parquet_ecart_last = RENDER_CACHE / "ecart_stock_last.parquet"
+
+    df_ecart_stock_prev = pd.DataFrame()
+    df_ecart_stock_last = pd.DataFrame()
     dossier_ecart_stock = RENDER_CACHE / "Ecart_Stock"
-    files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
-    if len(files) < 2:
-        print(f"Pas assez de fichiers dans {dossier_ecart_stock}")
-        df_ecart_stock_prev = df_ecart_stock_last = pd.DataFrame()
-    else:
-        file_prev, file_last = files[-2], files[-1]
-        df_ecart_stock_prev = pd.read_excel(file_prev)
-        df_ecart_stock_last = pd.read_excel(file_last)
-        (RENDER_CACHE / "ecart_stock_prev.parquet").write_bytes(df_ecart_stock_prev.to_parquet(index=False))
-        (RENDER_CACHE / "ecart_stock_last.parquet").write_bytes(df_ecart_stock_last.to_parquet(index=False))
 
-    # === FICHIERS DE RÉFÉRENCE ===
-    file_article = RENDER_CACHE / FILES["article"]
-    if not file_article.exists():
-        print(f"Téléchargement article depuis GitHub…")
-        flux = download_from_github(FILES["article"])
-        if flux:
-            with open(file_article, "wb") as f:
-                f.write(flux.getbuffer())
-    df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
-    df_inventaire = pd.read_excel(file_inventaire)
+    if dossier_ecart_stock.exists():
+        files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
+        if len(files) >= 2:
+            df_prev = pd.read_excel(files[-2])
+            df_last = pd.read_excel(files[-1])
+            df_prev.to_parquet(parquet_ecart_prev, index=False)
+            df_last.to_parquet(parquet_ecart_last, index=False)
+            df_ecart_stock_prev, df_ecart_stock_last = df_prev, df_last
 
-    # === SYNTHÈSE ===
+    # --- Synthèse chargement
     print("\n=== SYNTHÈSE DU CHARGEMENT ===")
     print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
     print(f"Réception : {len(df_reception)} lignes")
@@ -148,8 +165,9 @@ def load_data_hybride():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
-        file_last,
+        files[-1] if 'files' in locals() and files else None,
     )
+
 
 # =========================
 # === PREPROCESSING
