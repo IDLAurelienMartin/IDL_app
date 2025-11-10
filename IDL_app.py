@@ -685,6 +685,7 @@ def Analyse_stock():
     render_cache_dir = Path("/opt/render/project/src/render_cache")
     file_last_txt = render_cache_dir / "file_last.txt"
 
+    # --- Debug : afficher le contenu des dossiers ---
     cache_dir = Path("/opt/render/project/src/render_cache")
     st.write("Fichiers dans render_cache :", list(cache_dir.glob("*")))
 
