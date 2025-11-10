@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 import streamlit as st
 import urllib.request
 import io
+import requests
 
 # === PARAMÈTRES GLOBAUX ===
 GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/"
@@ -24,8 +25,7 @@ FILES = {
     "mvt_stock": "Mvt_stock/",
     "reception": "Historique_Reception/",
     "sorties": "Historique_des_Sorties/",
-    "ecart_stock": "Ecart_Stock/",
-    "file_last" :"file_last.txt"
+    "ecart_stock": "Ecart_Stock/"
 }
 
 
@@ -47,31 +47,28 @@ def get_excel_creation_date(file_path: Path) -> datetime:
     wb.close()
     return props.created or datetime.fromtimestamp(file_path.stat().st_ctime)
 
-
 def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame:
-    """
-    Concatène tous les fichiers Excel récents d’un dossier GitHub (par ex. Mvt_stock/).
-    """
     url_base = GITHUB_BASE + subfolder
-    print(f"🔎 Chargement des fichiers récents depuis {url_base}")
+    print(f"🔎 Téléchargement distant depuis {url_base}")
 
-    # Dans cette version simplifiée : on s’attend à un dossier cloné dans Render pour la vitesse
-    local_folder = RENDER_CACHE / subfolder.strip("/")
-    if not local_folder.exists():
-        print(f"Dossier non trouvé localement : {local_folder}")
+    api_url = f"https://api.github.com/repos/IDLAurelienMartin/Data_IDL/contents/{subfolder}"
+    response = requests.get(api_url)
+    if response.status_code != 200:
+        print("Impossible d’accéder au dossier GitHub.")
         return pd.DataFrame()
 
-    fichiers = [
-        f for f in local_folder.glob("**/*.xlsx")
-        if f.stat().st_mtime > date_ref.timestamp()
-    ]
-    print(f"{len(fichiers)} fichiers récents trouvés dans {local_folder}")
+    fichiers = []
+    for item in response.json():
+        if item["name"].endswith(".xlsx"):
+            url = item["download_url"]
+            flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
+            if flux:
+                fichiers.append(pd.read_excel(flux))
 
     if not fichiers:
         return pd.DataFrame()
 
-    return pd.concat((pd.read_excel(f) for f in fichiers), ignore_index=True)
-
+    return pd.concat(fichiers, ignore_index=True)
 
 def load_data_hybride():
     """Charge les données avec la logique hybride GitHub + cache local Render."""
@@ -149,6 +146,7 @@ def load_data_hybride():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
+        file_last,
     )
 
 # =========================
