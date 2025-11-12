@@ -83,9 +83,6 @@ def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame
 
 def load_data_hybride():
     """Charge les données avec la logique hybride GitHub + cache local Render (tout en parquet)."""
-
-    # --- Répertoire cache
-    RENDER_CACHE.mkdir(parents=True, exist_ok=True)
     
     # === ARTICLE ===
     file_article_xlsx = RENDER_CACHE / FILES["article"]
@@ -99,7 +96,7 @@ def load_data_hybride():
                 file_article_xlsx.write_bytes(flux.getbuffer())
         df_article_euros = pd.read_excel(file_article_xlsx)
         df_article_euros.to_parquet(parquet_article, index=False)
-        file_article_xlsx.unlink()
+        file_article_xlsx.unlink(missing_ok=True)
     else:
         df_article_euros = pd.read_parquet(parquet_article)
     
