@@ -86,7 +86,23 @@ def load_data_hybride():
 
     # --- Répertoire cache
     RENDER_CACHE.mkdir(parents=True, exist_ok=True)
+    
+    # === ARTICLE ===
+    file_article_xlsx = RENDER_CACHE / FILES["article"]
+    parquet_article = RENDER_CACHE / "article_euros.parquet"
 
+    if not parquet_article.exists():
+        if not file_article_xlsx.exists():
+            log("Téléchargement article depuis GitHub...")
+            flux = download_from_github(FILES["article"])
+            if flux:
+                file_article_xlsx.write_bytes(flux.getbuffer())
+        df_article_euros = pd.read_excel(file_article_xlsx)
+        df_article_euros.to_parquet(parquet_article, index=False)
+        file_article_xlsx.unlink()
+    else:
+        df_article_euros = pd.read_parquet(parquet_article)
+    
     # === INVENTAIRE ===
     file_inventaire_xlsx = RENDER_CACHE / FILES["inventaire"]
     parquet_inventaire = RENDER_CACHE / "inventaire.parquet"
@@ -103,21 +119,6 @@ def load_data_hybride():
     else:
         df_inventaire = pd.read_parquet(parquet_inventaire)
 
-    # === ARTICLE ===
-    file_article_xlsx = RENDER_CACHE / FILES["article"]
-    parquet_article = RENDER_CACHE / "article_euros.parquet"
-
-    if not parquet_article.exists():
-        if not file_article_xlsx.exists():
-            log("Téléchargement article depuis GitHub...")
-            flux = download_from_github(FILES["article"])
-            if flux:
-                file_article_xlsx.write_bytes(flux.getbuffer())
-        df_article_euros = pd.read_excel(file_article_xlsx)
-        df_article_euros.to_parquet(parquet_article, index=False)
-        file_article_xlsx.unlink()
-    else:
-        df_article_euros = pd.read_parquet(parquet_article)
 
     # --- Date référence pour filtrer les autres fichiers Excel
     date_ref = get_excel_creation_date(parquet_inventaire)
