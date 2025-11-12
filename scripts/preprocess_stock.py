@@ -85,20 +85,20 @@ def load_data_hybride():
     """Charge les données avec la logique hybride GitHub + cache local Render (tout en parquet)."""
     
     # === ARTICLE ===
-    file_article_xlsx = RENDER_CACHE / FILES["article"]
-    parquet_article = RENDER_CACHE / "article_euros.parquet"
+    #file_article_xlsx = RENDER_CACHE / FILES["article"]
+    #parquet_article = RENDER_CACHE / "article_euros.parquet"
 
-    if not parquet_article.exists():
-        if not file_article_xlsx.exists():
-            log("Téléchargement article depuis GitHub...")
-            flux = download_from_github(FILES["article"])
-            if flux:
-                file_article_xlsx.write_bytes(flux.getbuffer())
-        df_article_euros = pd.read_excel(file_article_xlsx)
-        df_article_euros.to_parquet(parquet_article, index=False)
-        file_article_xlsx.unlink(missing_ok=True)
-    else:
-        df_article_euros = pd.read_parquet(parquet_article)
+    #if not parquet_article.exists():
+    #    if not file_article_xlsx.exists():
+    #        log("Téléchargement article depuis GitHub...")
+    #        flux = download_from_github(FILES["article"])
+    #        if flux:
+    #            file_article_xlsx.write_bytes(flux.getbuffer())
+    #    df_article_euros = pd.read_excel(file_article_xlsx)
+    #    df_article_euros.to_parquet(parquet_article, index=False)
+    #    file_article_xlsx.unlink(missing_ok=True)
+    #else:
+    #    df_article_euros = pd.read_parquet(parquet_article)
     
     # === INVENTAIRE ===
     file_inventaire_xlsx = RENDER_CACHE / FILES["inventaire"]
