@@ -115,11 +115,7 @@ def load_data_hybride():
                 file_article_xlsx.write_bytes(flux.getbuffer())
         df_article_euros = pd.read_excel(file_article_xlsx)
         df_article_euros.to_parquet(parquet_article, index=False)
-        try:
-            file_article_xlsx.unlink()
-            log("Fichier Article_euros.xlsx supprimé du cache après conversion.")
-        except Exception as e:
-            log(f"Impossible de supprimer Article_euros.xlsx : {e}")
+        file_article_xlsx.unlink()
     else:
         df_article_euros = pd.read_parquet(parquet_article)
 
