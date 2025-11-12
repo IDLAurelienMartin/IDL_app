@@ -443,6 +443,11 @@ def save_parquet(df, file_name):
 
 
 def Analyse_stock():
+    if "logs" in st.session_state and st.session_state["logs"]:
+        with st.expander("Voir les logs du chargement"):
+            for ligne in st.session_state["logs"]:
+                st.text(ligne)
+
     today = datetime.today().strftime("%d/%m/%Y")
     st.set_page_config(layout="wide")
 

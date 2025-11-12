@@ -18,9 +18,9 @@ DEBUG = True  # passe à False en prod
 
 def log(msg):
     if DEBUG:
-        st.write(msg)
-    else:
-        logging.info(msg)
+        if "logs" not in st.session_state:
+            st.session_state["logs"] = []
+        st.session_state["logs"].append(str(msg))
 
 # === PARAMÈTRES GLOBAUX ===
 GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/"
