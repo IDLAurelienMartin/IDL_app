@@ -1,31 +1,23 @@
 # scripts/preprocess_stock.py
 import os
-import glob
 import pandas as pd
 from pathlib import Path
 import sys
 from datetime import datetime
 import re
-import git
 from openpyxl import load_workbook
 import streamlit as st
 import urllib.request
 import io
 import requests
-import logging
-
-DEBUG = True  # passe à False en prod
-
-def log(msg):
-    if DEBUG:
-        if "logs" not in st.session_state:
-            st.session_state["logs"] = []
-        st.session_state["logs"].append(str(msg))
+import shutil
 
 # === PARAMÈTRES GLOBAUX ===
 GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/"
-RENDER_CACHE = Path("/opt/render/project/src/render_cache") # Dossier local Render
+RENDER_CACHE = Path("/opt/render/project/src/render_cache")  # Dossier local Render
 RENDER_CACHE.mkdir(parents=True, exist_ok=True)
+BACKUP_PARQUET = Path("/opt/render/project/src/Data_app/backup_parquet")
+BACKUP_PARQUET.mkdir(parents=True, exist_ok=True)
 
 # === Liste des fichiers distants GitHub ===
 FILES = {
@@ -37,6 +29,9 @@ FILES = {
     "ecart_stock": "Ecart_Stock/"
 }
 
+# ------------------------------
+# === Fonctions utilitaires ===
+# ------------------------------
 
 def download_from_github(file_path: str) -> io.BytesIO:
     """Télécharge un fichier Excel depuis GitHub et renvoie un flux en mémoire."""
@@ -45,107 +40,93 @@ def download_from_github(file_path: str) -> io.BytesIO:
         with urllib.request.urlopen(url) as response:
             return io.BytesIO(response.read())
     except Exception as e:
-        log(f"Impossible de charger {file_path} depuis GitHub : {e}")
+        print(f"Erreur download {file_path}: {e}")
         return None
 
-
 def get_excel_creation_date(file_path: Path) -> datetime:
-    """Récupère la date interne d’un fichier Excel."""
+    """Récupère la date interne d’un fichier Excel ou le timestamp si absent."""
     wb = load_workbook(file_path, read_only=True)
     props = wb.properties
     wb.close()
     return props.created or datetime.fromtimestamp(file_path.stat().st_mtime)
 
 def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame:
-    url_base = GITHUB_BASE + subfolder
-    log(f"Téléchargement distant depuis {url_base}")
-
+    """Concatène tous les fichiers Excel plus récents que date_ref depuis GitHub."""
     api_url = f"https://api.github.com/repos/IDLAurelienMartin/Data_IDL/contents/{subfolder}"
     response = requests.get(api_url)
     if response.status_code != 200:
-        log("Impossible d’accéder au dossier GitHub.")
         return pd.DataFrame()
 
     fichiers = []
     for item in response.json():
         if item["name"].endswith(".xlsx"):
-            file_date = datetime.strptime(item["git_url"][-20:-10], "%d_%m_%Y")  # exemple si tu peux extraire date du nom
-            if file_date and file_date > date_ref:
-                url = item["download_url"]
-                flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
-                if flux:
-                    fichiers.append(pd.read_excel(flux))
-
+            # fallback si la date n’est pas trouvée, on prend tous les fichiers
+            url = item["download_url"]
+            flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
+            if flux:
+                fichiers.append(pd.read_excel(flux))
     if not fichiers:
         return pd.DataFrame()
-
     return pd.concat(fichiers, ignore_index=True)
 
 def load_data_hybride():
-    """Charge les données avec la logique hybride GitHub + cache local Render (tout en parquet)."""
-    
-    # === ARTICLE ===
-    #file_article_xlsx = RENDER_CACHE / FILES["article"]
-    #parquet_article = RENDER_CACHE / "article_euros.parquet"
+    """Charge les données avec la logique hybride GitHub + cache local Render (tout en Parquet)."""
+    # --- ARTICLE ---
+    file_article_xlsx = RENDER_CACHE / FILES["article"]
+    parquet_article = RENDER_CACHE / "article_euros.parquet"
+    if not parquet_article.exists():
+        if not file_article_xlsx.exists():
+            flux = download_from_github(FILES["article"])
+            if flux:
+                file_article_xlsx.write_bytes(flux.getbuffer())
+        df_article_euros = pd.read_excel(file_article_xlsx)
+        df_article_euros.to_parquet(parquet_article, index=False)
+        shutil.copy(parquet_article, BACKUP_PARQUET / "article_euros.parquet")
+        file_article_xlsx.unlink(missing_ok=True)
+    else:
+        df_article_euros = pd.read_parquet(parquet_article)
 
-    #if not parquet_article.exists():
-    #    if not file_article_xlsx.exists():
-    #        log("Téléchargement article depuis GitHub...")
-    #        flux = download_from_github(FILES["article"])
-    #        if flux:
-    #            file_article_xlsx.write_bytes(flux.getbuffer())
-    #    df_article_euros = pd.read_excel(file_article_xlsx)
-    #    df_article_euros.to_parquet(parquet_article, index=False)
-    #    file_article_xlsx.unlink(missing_ok=True)
-    #else:
-    #    df_article_euros = pd.read_parquet(parquet_article)
-    
-    # === INVENTAIRE ===
+    # --- INVENTAIRE ---
     file_inventaire_xlsx = RENDER_CACHE / FILES["inventaire"]
     parquet_inventaire = RENDER_CACHE / "inventaire.parquet"
-
     if not parquet_inventaire.exists():
         if not file_inventaire_xlsx.exists():
-            log("Téléchargement inventaire depuis GitHub...")
             flux = download_from_github(FILES["inventaire"])
             if flux:
                 file_inventaire_xlsx.write_bytes(flux.getbuffer())
         df_inventaire = pd.read_excel(file_inventaire_xlsx)
         df_inventaire.to_parquet(parquet_inventaire, index=False)
-        file_inventaire_xlsx.unlink(missing_ok=True)  # supprime le xlsx
+        shutil.copy(parquet_inventaire, BACKUP_PARQUET / "inventaire.parquet")
+        file_inventaire_xlsx.unlink(missing_ok=True)
     else:
         df_inventaire = pd.read_parquet(parquet_inventaire)
 
-
-    # --- Date référence pour filtrer les autres fichiers Excel
+    # --- Date référence pour filtrer les autres fichiers ---
     date_ref = get_excel_creation_date(parquet_inventaire)
 
-    # === FONCTION UTILITAIRE POUR CHARGER LES PARQUET OU CONVERTIR LES EXCELS GITHUB POSTÉRIEURS À date_ref
+    # --- Fonction utilitaire pour charger parquet ou Excel récents ---
     def load_parquet_or_excel(name: str, subfolder: str) -> pd.DataFrame:
         parquet_file = RENDER_CACHE / f"{name}.parquet"
         if parquet_file.exists():
-            log(f"Chargement {name}.parquet depuis Render Cache")
             return pd.read_parquet(parquet_file)
-
-        log(f"Aucun parquet trouvé pour {name}, lecture Excel GitHub…")
         df = concat_excel_from_github(subfolder, date_ref)
         if not df.empty:
             df.to_parquet(parquet_file, index=False)
-            log(f"{name}.parquet créé dans {RENDER_CACHE}")
+            shutil.copy(parquet_file, BACKUP_PARQUET / f"{name}.parquet")
         return df
 
     df_mvt_stock = load_parquet_or_excel("mvt_stock", FILES["mvt_stock"])
     df_reception = load_parquet_or_excel("reception", FILES["reception"])
     df_sorties = load_parquet_or_excel("sorties", FILES["sorties"])
 
-    # === ECART STOCK ===
+    # --- ECART STOCK ---
     parquet_ecart_prev = RENDER_CACHE / "ecart_stock_prev.parquet"
     parquet_ecart_last = RENDER_CACHE / "ecart_stock_last.parquet"
-
     df_ecart_stock_prev = pd.DataFrame()
     df_ecart_stock_last = pd.DataFrame()
     dossier_ecart_stock = RENDER_CACHE / "Ecart_Stock"
 
+    files = []
     if dossier_ecart_stock.exists():
         files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
         if len(files) >= 2:
@@ -153,16 +134,9 @@ def load_data_hybride():
             df_last = pd.read_excel(files[-1])
             df_prev.to_parquet(parquet_ecart_prev, index=False)
             df_last.to_parquet(parquet_ecart_last, index=False)
+            shutil.copy(parquet_ecart_prev, BACKUP_PARQUET / "ecart_stock_prev.parquet")
+            shutil.copy(parquet_ecart_last, BACKUP_PARQUET / "ecart_stock_last.parquet")
             df_ecart_stock_prev, df_ecart_stock_last = df_prev, df_last
-
-    # --- Synthèse chargement
-    log("\n=== SYNTHÈSE DU CHARGEMENT ===")
-    log(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
-    log(f"Réception : {len(df_reception)} lignes")
-    log(f"Sorties   : {len(df_sorties)} lignes")
-    log(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
-    log(f"Article_euros : {len(df_article_euros)} lignes")
-    log(f"Inventaire : {len(df_inventaire)} lignes")
 
     return (
         df_mvt_stock,
@@ -172,7 +146,7 @@ def load_data_hybride():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
-        files[-1] if 'files' in locals() and files else None,
+        files[-1] if files else None,
     )
 
 
@@ -259,9 +233,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 df_inventaire["Inventaire_Final_Quantity"] = pd.to_numeric(
                     df_inventaire["Inventaire_Final_Quantity"], errors="coerce"
                 )
-
-        else:
-            log("Aucun fichier inventaire trouvé ou vide.")
 
         if 'MGB' in df_inventaire.columns:
             df_inventaire['MGB'] = df_inventaire['MGB'].astype(str)
@@ -417,7 +388,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
-            log("df_article_euros vide ou non trouvé.")
+            print("df_article_euros vide ou non trouvé.")
         else:
             # Toujours travailler en str pour éviter surprises
             df_article_euros = df_article_euros.astype(str)
@@ -425,7 +396,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             # Nettoyage basique des noms de colonnes lus par pandas
             cols_raw = [str(c).strip() for c in df_article_euros.columns]
             cols_joined = " | ".join(cols_raw).lower()
-            log("Colonnes lues initialement :", cols_raw)
 
             # 2) Détecter si pandas a pris la première ligne comme données (cas où cols_raw sont des valeurs)
             # heuristique : si la première colonne est numérique ou ressemble à une référence (ex: '68513')
@@ -443,7 +413,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
             # 3) Si l'entête semble manquer : prendre la première ligne comme header
             if looks_like_data_header:
-                log("Info: La première ligne semble contenir l'entête réelle → on l'utilise comme header.")
                 # prendre la 1ère ligne comme header, puis supprimer cette ligne des données
                 new_header = df_article_euros.iloc[0].astype(str).str.strip().tolist()
                 df_article_euros = df_article_euros[1:].reset_index(drop=True)
@@ -458,8 +427,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 clean_cols.append(c)
             df_article_euros.columns = clean_cols
 
-            log("Colonnes après nettoyage :", list(df_article_euros.columns))
-
             # 5) Renommer la colonne prix (recherche fuzz : '€', 'unitaire', 'prix')
             euro_col = None
             for c in df_article_euros.columns:
@@ -469,10 +436,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     break
             if euro_col:
                 df_article_euros = df_article_euros.rename(columns={euro_col: "Prix_Unitaire"})
-                log(f"-> Colonne prix détectée et renommée : '{euro_col}' -> 'Prix_Unitaire'")
-            else:
-                log("Colonne prix introuvable (ni '€', ni 'unitaire', ni 'prix').")
-
+ 
             # 6) Renommer la colonne référence si nécessaire (ex: 'ref', 'Ref', 'Réf', 'MGB', ...)
             ref_col = None
             for c in df_article_euros.columns:
@@ -482,7 +446,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     break
             if ref_col and ref_col != 'ref':
                 df_article_euros = df_article_euros.rename(columns={ref_col: 'ref'})
-                log(f"-> Colonne référence renommée : '{ref_col}' -> 'ref'")
             elif not ref_col:
                 # tenter de détecter la colonne référence par type (entier)
                 for c in df_article_euros.columns:
@@ -490,10 +453,9 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     if all(re.fullmatch(r'\d+', s) for s in sample):
                         df_article_euros = df_article_euros.rename(columns={c: 'ref'})
                         ref_col = 'ref'
-                        log(f"-> Colonne référence détectée automatiquement : '{c}' -> 'ref'")
                         break
-                if not ref_col:
-                    log("Colonne référence introuvable automatiquement. Vérifie le fichier Article_€.xlsx")
+                if not ref_col: # toujours pas trouvé
+                    print("Colonne référence non trouvée dans df_article_euros.")
 
             # 7) Convertir Prix_Unitaire en float (retirer '€', remplacer virgule par point)
             if 'Prix_Unitaire' in df_article_euros.columns:
@@ -503,12 +465,8 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 s = s.str.replace(' ', '', regex=False)
                 s = s.str.replace(',', '.', regex=False)
                 df_article_euros['Prix_Unitaire'] = pd.to_numeric(s, errors='coerce')
-                log("-> Conversion 'Prix_Unitaire' en numérique effectuée.")
             else:
-                log("'Prix_Unitaire' absent, conversion ignorée.")
-
-            log("Aperçu articles (head):")
-            log(df_article_euros.head(5))
+                print("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
 
 
 
@@ -600,11 +558,8 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
                 expected = {"MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"}
                 if expected.issubset(set(df_old.columns)):
-                    log("Fusion des anciens commentaires et choix traitement avec les nouvelles données...")
-
                     # --- s'assurer qu'il n'y a pas de doublons côté ancien fichier (garder le dernier) ---
                     if df_old["MGB_6"].duplicated().any():
-                        log(f"Attention : {df_old['MGB_6'].duplicated().sum()} doublons trouvés dans df_old -> on garde la dernière occurrence.")
                         df_old = df_old.sort_values("Date_Dernier_Commentaire", ascending=True).drop_duplicates(subset="MGB_6", keep="last")
 
                     # --- fusionner (suffixe _old) ---
@@ -626,26 +581,25 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                             mask_missing = df_ecart_stock_last[col].isnull() | (df_ecart_stock_last[col].astype(str).str.strip() == "")
                             n_to_fill = mask_missing.sum()
                             if n_to_fill:
-                                log(f"Remplissage {n_to_fill} valeurs manquantes dans '{col}' depuis '{old_col}'.")
                                 df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
                         else:
-                            log(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
+                            print(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
 
                     # --- supprimer toutes les colonnes finissant par _old (robuste) ---
                     old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
                     if old_cols:
-                        log(f"Suppression des colonnes temporaires : {old_cols}")
+                        print(f"Suppression des colonnes temporaires : {old_cols}")
                         df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
                     else:
-                        log("Aucune colonne *_old à supprimer.")
+                        print("Aucune colonne *_old à supprimer.")
 
                 else:
-                    log("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
+                    print("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
 
             except Exception as e:
-                log(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
+                print(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
         else:
-            log("Aucun ancien parquet trouvé sur OneDrive, création initiale du fichier.")
+            print("Aucun ancien parquet trouvé sur OneDrive, création initiale du fichier.")
 
         def remove_full_duplicate_rows(df):
             """
@@ -663,5 +617,20 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_inventaire = remove_full_duplicate_rows(df_inventaire)
         df_mvt_stock = remove_full_duplicate_rows(df_mvt_stock)
         df_article_euros = remove_full_duplicate_rows(df_article_euros)
+        
+        parquet_paths = {
+            "ecart_stock_prev": RENDER_CACHE / "ecart_stock_prev.parquet",
+            "ecart_stock_last": RENDER_CACHE / "ecart_stock_last.parquet",
+            "mvt_stock": RENDER_CACHE / "mvt_stock.parquet",
+            "reception": RENDER_CACHE / "reception.parquet",
+            "sorties": RENDER_CACHE / "sorties.parquet",
+            "inventaire": RENDER_CACHE / "inventaire.parquet",
+            "article_euros": RENDER_CACHE / "article_euros.parquet"
+        }
+        for key, path in parquet_paths.items():
+            df = locals().get(key)
+            if df is not None and not df.empty:
+                df.to_parquet(path, index=False)
+                shutil.copy(path, BACKUP_PARQUET / path.name)
 
         return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock
