@@ -11,132 +11,156 @@ import urllib.request
 import io
 import requests
 import shutil
+from io import BytesIO
 
-# === PARAMÈTRES GLOBAUX ===
-GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/"
-RENDER_CACHE = Path("/opt/render/project/src/render_cache")  # Dossier local Render
-RENDER_CACHE.mkdir(parents=True, exist_ok=True)
-BACKUP_PARQUET = Path("/opt/render/project/src/Data_app/backup_parquet")
-BACKUP_PARQUET.mkdir(parents=True, exist_ok=True)
+# ============================================================
+# === CONFIG GITHUB
+# ============================================================
+GITHUB_OWNER = "IDLAurelienMartin"
+GITHUB_REPO = "Data_IDL"
+GITHUB_BRANCH = "main"
 
-# === Liste des fichiers distants GitHub ===
-FILES = {
-    "article": "Article_euros.xlsx",
-    "inventaire": "Inventory_21_09_2025.xlsx",
-    "mvt_stock": "Mvt_stock/",
-    "reception": "Historique_Reception/",
-    "sorties": "Historique_des_Sorties/",
-    "ecart_stock": "Ecart_Stock/"
-}
+API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/"
+RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/"
 
-# ------------------------------
-# === Fonctions utilitaires ===
-# ------------------------------
 
-def download_from_github(file_path: str) -> io.BytesIO:
-    """Télécharge un fichier Excel depuis GitHub et renvoie un flux en mémoire."""
-    url = GITHUB_BASE + file_path
+# ============================================================
+# === UTILITAIRES GITHUB
+# ============================================================
+
+def github_list_folder(folder_path: str):
+    """
+    Liste le contenu d’un dossier GitHub via l’API.
+    Retourne une liste de dictionnaires :
+    [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
+    """
+    url = API_BASE + folder_path
+    r = requests.get(url)
+    if r.status_code != 200:
+        print(f"Dossier introuvable sur GitHub : {url}")
+        return []
+    return r.json()
+
+
+def github_list_excel_files_recursive(folder_path: str):
+    """
+    Liste tous les fichiers .xlsx dans un dossier + sous-dossiers GitHub.
+    """
+    results = []
+    stack = [folder_path]
+
+    while stack:
+        current = stack.pop()
+        items = github_list_folder(current)
+
+        for it in items:
+            if it["type"] == "dir":
+                stack.append(it["path"])
+            elif it["type"] == "file" and it["name"].endswith(".xlsx"):
+                results.append(it["path"])
+
+    return results
+
+
+def read_excel_from_github(path: str) -> pd.DataFrame:
+    """Télécharge un Excel RAW depuis GitHub."""
+    url = RAW_BASE + path
     try:
-        with urllib.request.urlopen(url) as response:
-            return io.BytesIO(response.read())
-    except Exception as e:
-        print(f"Erreur download {file_path}: {e}")
-        return None
+        r = requests.get(url)
+        r.raise_for_status()
+        return pd.read_excel(BytesIO(r.content))
+    except:
+        print(f"Échec lecture : {url}")
+        return pd.DataFrame()
 
-def get_excel_creation_date(file_path: Path) -> datetime:
-    """Récupère la date interne d’un fichier Excel ou le timestamp si absent."""
-    wb = load_workbook(file_path, read_only=True)
+
+def get_excel_creation_date_from_github(path: str) -> datetime:
+    """Récupère la date interne d’un Excel depuis GitHub."""
+    url = RAW_BASE + path
+    r = requests.get(url)
+    r.raise_for_status()
+
+    wb = load_workbook(filename=BytesIO(r.content), read_only=True)
     props = wb.properties
     wb.close()
-    return props.created or datetime.fromtimestamp(file_path.stat().st_mtime)
 
-def concat_excel_from_github(subfolder: str, date_ref: datetime) -> pd.DataFrame:
-    """Concatène tous les fichiers Excel plus récents que date_ref depuis GitHub."""
-    api_url = f"https://api.github.com/repos/IDLAurelienMartin/Data_IDL/contents/{subfolder}"
-    response = requests.get(api_url)
-    if response.status_code != 200:
+    if props.created:
+        return props.created
+    raise ValueError("Métadonnée Excel 'created' introuvable.")
+
+
+# ============================================================
+# === CHARGEMENT DES DONNÉES
+# ============================================================
+
+def load_data():
+    """
+    Charge toutes les données depuis GitHub.
+    Sans liste manuelle, via API GitHub.
+    """
+
+    # ----------------------------------------
+    #  Inventaire
+    # ----------------------------------------
+    INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
+
+    try:
+        date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
+        print("Date interne inventaire :", date_ref)
+    except:
+        print("Erreur lecture métadonnées inventaire -> fallback now()")
+        date_ref = datetime.now()
+
+    df_inventaire = read_excel_from_github(INVENTORY_PATH)
+
+    # ----------------------------------------
+    # Chargement automatique dossiers
+    # ----------------------------------------
+    def load_folder(folder):
+        files = github_list_excel_files_recursive(folder)
+
+        dfs = []
+        for f in files:
+            dfs.append(read_excel_from_github(f))
+
+        if dfs:
+            return pd.concat(dfs, ignore_index=True)
         return pd.DataFrame()
 
-    fichiers = []
-    for item in response.json():
-        if item["name"].endswith(".xlsx"):
-            # fallback si la date n’est pas trouvée, on prend tous les fichiers
-            url = item["download_url"]
-            flux = download_from_github(url.replace(GITHUB_BASE, subfolder))
-            if flux:
-                fichiers.append(pd.read_excel(flux))
-    if not fichiers:
-        return pd.DataFrame()
-    return pd.concat(fichiers, ignore_index=True)
+    df_mvt_stock = load_folder("Mvt_stock")
+    df_reception = load_folder("Historique_Reception")
+    df_sorties = load_folder("Historique_des_Sorties")
 
-def load_data_hybride():
-    """Charge les données avec la logique hybride GitHub + cache local Render (tout en Parquet)."""
-    # --- ARTICLE ---
-    file_article_xlsx = RENDER_CACHE / FILES["article"]
-    parquet_article = RENDER_CACHE / "article_euros.parquet"
-    if not parquet_article.exists():
-        if not file_article_xlsx.exists():
-            flux = download_from_github(FILES["article"])
-            if flux:
-                file_article_xlsx.write_bytes(flux.getbuffer())
-        df_article_euros = pd.read_excel(file_article_xlsx)
-        df_article_euros.to_parquet(parquet_article, index=False)
-        shutil.copy(parquet_article, BACKUP_PARQUET / "article_euros.parquet")
-        file_article_xlsx.unlink(missing_ok=True)
-    else:
-        df_article_euros = pd.read_parquet(parquet_article)
+    # ----------------------------------------
+    # ECART STOCK : derniers fichiers automatiquement
+    # ----------------------------------------
+    ecart_files = sorted(github_list_excel_files_recursive("Ecart_Stock"))
 
-    # --- INVENTAIRE ---
-    file_inventaire_xlsx = RENDER_CACHE / FILES["inventaire"]
-    parquet_inventaire = RENDER_CACHE / "inventaire.parquet"
-    if not parquet_inventaire.exists():
-        if not file_inventaire_xlsx.exists():
-            flux = download_from_github(FILES["inventaire"])
-            if flux:
-                file_inventaire_xlsx.write_bytes(flux.getbuffer())
-        df_inventaire = pd.read_excel(file_inventaire_xlsx)
-        df_inventaire.to_parquet(parquet_inventaire, index=False)
-        shutil.copy(parquet_inventaire, BACKUP_PARQUET / "inventaire.parquet")
-        file_inventaire_xlsx.unlink(missing_ok=True)
-    else:
-        df_inventaire = pd.read_parquet(parquet_inventaire)
+    if len(ecart_files) < 2:
+        raise FileNotFoundError("Pas assez de fichiers d’écart stock dans GitHub.")
 
-    # --- Date référence pour filtrer les autres fichiers ---
-    date_ref = get_excel_creation_date(parquet_inventaire)
+    file_prev = ecart_files[-2]
+    file_last = ecart_files[-1]
 
-    # --- Fonction utilitaire pour charger parquet ou Excel récents ---
-    def load_parquet_or_excel(name: str, subfolder: str) -> pd.DataFrame:
-        parquet_file = RENDER_CACHE / f"{name}.parquet"
-        if parquet_file.exists():
-            return pd.read_parquet(parquet_file)
-        df = concat_excel_from_github(subfolder, date_ref)
-        if not df.empty:
-            df.to_parquet(parquet_file, index=False)
-            shutil.copy(parquet_file, BACKUP_PARQUET / f"{name}.parquet")
-        return df
+    df_ecart_stock_prev = read_excel_from_github(file_prev)
+    df_ecart_stock_last = read_excel_from_github(file_last)
 
-    df_mvt_stock = load_parquet_or_excel("mvt_stock", FILES["mvt_stock"])
-    df_reception = load_parquet_or_excel("reception", FILES["reception"])
-    df_sorties = load_parquet_or_excel("sorties", FILES["sorties"])
+    # ----------------------------------------
+    # Article € (fichier unique)
+    # ----------------------------------------
+    df_article_euros = read_excel_from_github("Article_euros.xlsx")
 
-    # --- ECART STOCK ---
-    parquet_ecart_prev = RENDER_CACHE / "ecart_stock_prev.parquet"
-    parquet_ecart_last = RENDER_CACHE / "ecart_stock_last.parquet"
-    df_ecart_stock_prev = pd.DataFrame()
-    df_ecart_stock_last = pd.DataFrame()
-    dossier_ecart_stock = RENDER_CACHE / "Ecart_Stock"
-
-    files = []
-    if dossier_ecart_stock.exists():
-        files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
-        if len(files) >= 2:
-            df_prev = pd.read_excel(files[-2])
-            df_last = pd.read_excel(files[-1])
-            df_prev.to_parquet(parquet_ecart_prev, index=False)
-            df_last.to_parquet(parquet_ecart_last, index=False)
-            shutil.copy(parquet_ecart_prev, BACKUP_PARQUET / "ecart_stock_prev.parquet")
-            shutil.copy(parquet_ecart_last, BACKUP_PARQUET / "ecart_stock_last.parquet")
-            df_ecart_stock_prev, df_ecart_stock_last = df_prev, df_last
+    # ----------------------------------------
+    # SYNTHÈSE
+    # ----------------------------------------
+    print("\n=== SYNTHÈSE GITHUB ===")
+    print("Mvt Stock :", len(df_mvt_stock))
+    print("Réception :", len(df_reception))
+    print("Sorties   :", len(df_sorties))
+    print("Écart prev:", len(df_ecart_stock_prev))
+    print("Écart last:", len(df_ecart_stock_last))
+    print("Articles €:", len(df_article_euros))
+    print("Inventaire:", len(df_inventaire))
 
     return (
         df_mvt_stock,
@@ -146,9 +170,8 @@ def load_data_hybride():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
-        files[-1] if files else None,
+        file_last,
     )
-
 
 # =========================
 # === PREPROCESSING
@@ -618,19 +641,4 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_mvt_stock = remove_full_duplicate_rows(df_mvt_stock)
         df_article_euros = remove_full_duplicate_rows(df_article_euros)
         
-        parquet_paths = {
-            "ecart_stock_prev": RENDER_CACHE / "ecart_stock_prev.parquet",
-            "ecart_stock_last": RENDER_CACHE / "ecart_stock_last.parquet",
-            "mvt_stock": RENDER_CACHE / "mvt_stock.parquet",
-            "reception": RENDER_CACHE / "reception.parquet",
-            "sorties": RENDER_CACHE / "sorties.parquet",
-            "inventaire": RENDER_CACHE / "inventaire.parquet",
-            "article_euros": RENDER_CACHE / "article_euros.parquet"
-        }
-        for key, path in parquet_paths.items():
-            df = locals().get(key)
-            if df is not None and not df.empty:
-                df.to_parquet(path, index=False)
-                shutil.copy(path, BACKUP_PARQUET / path.name)
-
         return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock
