@@ -22,6 +22,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
+
 def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
@@ -413,53 +414,74 @@ def tab_QR_Codes():
                     if st.button("Effacer le code barre"):
                             st.experimental_rerun()
 
-
 # --- Dossier cache local sur Render ---
-CACHE_DIR = Path("Cache")
-CACHE_DIR.mkdir(exist_ok=True)
+# Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
+RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
+LOCAL_CACHE_DIR = Path("Cache")
+GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 
-# --- URL GitHub pour les fichiers parquet initiaux ---
-GITHUB_RAW_URL = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Cache"
+# On crée aussi le dossier Cache pour éviter les erreurs
+LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
-# --- Fonction pour charger parquet depuis cache ou GitHub ---
-def load_parquet(file_name):
-    local_path = CACHE_DIR / file_name
+def load_parquet_local(file_name):
+    """
+    Charge un parquet strictement depuis Render :
+    1) render_cache   (lecture seule)
+    2) Cache/         (si ton app l'a déjà généré)
+    Aucun téléchargement GitHub.
+    """
+
+    # 1) Chemin Render
+    render_path = RENDER_CACHE_DIR / file_name
+    if render_path.exists():
+        return pd.read_parquet(render_path)
+
+    # 2) Chemin Cache interne Streamlit
+    local_path = LOCAL_CACHE_DIR / file_name
     if local_path.exists():
         return pd.read_parquet(local_path)
-    url = f"{GITHUB_RAW_URL}/{file_name}"
-    try:
-        df = pd.read_parquet(url)
-        df.to_parquet(local_path, index=False)  # sauvegarde dans cache
-        return df
-    except Exception as e:
-        st.warning(f"Impossible de charger {file_name} depuis GitHub : {e}")
-        return pd.DataFrame()
 
-# --- Fonction pour sauvegarder parquet dans cache ---
-def save_parquet(df, file_name):
-    local_path = CACHE_DIR / file_name
+    # 3) Fichier introuvable
+    st.error(f"Fichier manquant : {file_name}")
+    return pd.DataFrame()
+
+def save_parquet_local(df, file_name):
+    """
+    Sauvegarde UNIQUE dans le dossier Cache/ interne.
+    Render ne permet pas d'écrire dans render_cache (lecture seule).
+    """
+    local_path = LOCAL_CACHE_DIR / file_name
     df.to_parquet(local_path, index=False)
-    st.success(f"{file_name} sauvegardé dans le cache Render !")
+    st.success(f"{file_name} sauvegardé dans Cache/")
 
+def git_commit_push(file_path: Path, message: str):
+    """
+    Commit et push automatique d'un fichier vers GitHub.
+    """
+    try:
+        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "add", str(file_path)], check=True)
+        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "commit", "-m", message], check=True)
+        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "push"], check=True)
+        st.success(f"{file_path.name} poussé sur Git avec succès !")
+    except subprocess.CalledProcessError as e:
+        st.error(f"Erreur Git : {e}")
 
 def Analyse_stock():
-    if "logs" in st.session_state and st.session_state["logs"]:
-        with st.expander("Voir les logs du chargement"):
-            for ligne in st.session_state["logs"]:
-                st.text(ligne)
 
-    today = datetime.today().strftime("%d/%m/%Y")
     st.set_page_config(layout="wide")
 
-    # --- Charger les fichiers ---
-    df_article_euros = load_parquet("article_euros.parquet")
-    df_inventaire    = load_parquet("inventaire.parquet")
-    df_mvt_stock     = load_parquet("mvt_stock.parquet")
-    df_reception     = load_parquet("reception.parquet")
-    df_sorties       = load_parquet("sorties.parquet")
-    df_ecart_stock_prev = load_parquet("ecart_stock_prev.parquet")
-    df_ecart_stock_last = load_parquet("ecart_stock_last.parquet")
-    
+    # --- Lire UNIQUEMENT depuis Render ---
+    df_article_euros = load_parquet_local("article_euros.parquet")
+    df_ecart_stock_prev = load_parquet_local("ecart_stock_prev.parquet")
+    df_ecart_stock_last = load_parquet_local("ecart_stock_last.parquet")
+    df_reception = load_parquet_local("reception.parquet")
+    df_sorties = load_parquet_local("sorties.parquet")
+    df_inventaire = load_parquet_local("inventaire.parquet")
+    df_mvt_stock = load_parquet_local("mvt_stock.parquet")
+
+    if df_article_euros.empty:
+        st.stop()
+   
     # Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
     for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
         if "MGB_6" in df.columns:
@@ -858,6 +880,7 @@ def Analyse_stock():
             df_temp_last.at[index, "Choix_traitement"] = choix_source
             st.session_state.df_comments = df_temp_last
             df_temp_last.to_parquet(parquet_path, index=False)
+            git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
@@ -881,6 +904,7 @@ def Analyse_stock():
                 df_temp_last.at[index, "Choix_traitement"] = choix_source
                 st.session_state.df_comments = df_temp_last
                 df_temp_last.to_parquet(parquet_path, index=False)
+                git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
    # --------------------------
@@ -1146,15 +1170,15 @@ def Analyse_stock():
 
         st.success("PDF généré et parquet mis à jour avec les commentaires !")
 
-def tab_realisateurs():
-    st.title("Réalisateurs")
+def tab_Detrompeurs():
+    st.title("Détrompeurs")
 
 # Configuration des onglets
 tabs = {
     "Accueil": tab_home,
     "QR Codes et Code Barre": tab_QR_Codes,
     "Analyse Stock": Analyse_stock,
-    "X3": tab_realisateurs
+    "Détrompeurs": tab_Detrompeurs
 }
 
 def main():
