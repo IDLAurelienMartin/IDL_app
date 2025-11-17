@@ -425,24 +425,44 @@ LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
 def load_parquet_local(file_name):
     """
-    Charge un parquet strictement depuis Render :
-    1) render_cache   (lecture seule)
-    2) Cache/         (si ton app l'a déjà généré)
-    Aucun téléchargement GitHub.
+    Ordre de récupération :
+    1) /opt/render/project/src/render_cache/
+    2) Cache/
+    3) Repo Git local (/opt/render/project/src/)
     """
 
-    # 1) Chemin Render
+    # 1) Chemin Render Cache
     render_path = RENDER_CACHE_DIR / file_name
     if render_path.exists():
-        return pd.read_parquet(render_path)
+        try:
+            return pd.read_parquet(render_path)
+        except Exception as e:
+            st.warning(f"Erreur lecture Render cache → {e}")
 
-    # 2) Chemin Cache interne Streamlit
+    # 2) Chemin Cache Streamlit
     local_path = LOCAL_CACHE_DIR / file_name
     if local_path.exists():
-        return pd.read_parquet(local_path)
+        try:
+            return pd.read_parquet(local_path)
+        except Exception as e:
+            st.warning(f"Erreur lecture Cache local → {e}")
 
-    # 3) Fichier introuvable
-    st.error(f"Fichier manquant : {file_name}")
+    # 3) Fallback Git (repo cloné automatiquement par Render)
+    git_path = GIT_REPO_DIR / file_name
+    if git_path.exists():
+        try:
+            df = pd.read_parquet(git_path)
+
+            # On sauvegarde en cache local pour les prochaines lectures
+            LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+            df.to_parquet(local_path)
+
+            return df
+        except Exception as e:
+            st.error(f"Erreur lecture fichier dans Git → {e}")
+
+    # 4) Fichier absent partout
+    st.error(f"Fichier introuvable : {file_name}")
     return pd.DataFrame()
 
 def save_parquet_local(df, file_name):
