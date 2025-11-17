@@ -21,6 +21,7 @@ from git import Repo
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+import requests
 
 
 def tab_home():
@@ -423,47 +424,45 @@ GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 # On crée aussi le dossier Cache pour éviter les erreurs
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
-def load_parquet_local(file_name):
-    """
-    Ordre de récupération :
-    1) /opt/render/project/src/render_cache/
-    2) Cache/
-    3) Repo Git local (/opt/render/project/src/)
-    """
+# --- Dossiers ---
+RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
+LOCAL_CACHE_DIR = Path("Cache")  # tentative locale
+LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
-    # 1) Chemin Render Cache
+# --- GitHub RAW pour Data_IDL ---
+GITHUB_OWNER = "IDLAurelienMartin"
+GITHUB_REPO = "Data_IDL"
+GITHUB_BRANCH = "main"
+RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
+
+def load_parquet(file_name):
+    """
+    Charge un parquet en suivant cet ordre :
+    1) Render cache
+    2) Local cache interne (Cache/)
+    3) GitHub RAW (Data_IDL)
+    """
+    # 1) Render cache
     render_path = RENDER_CACHE_DIR / file_name
     if render_path.exists():
-        try:
-            return pd.read_parquet(render_path)
-        except Exception as e:
-            st.warning(f"Erreur lecture Render cache → {e}")
-
-    # 2) Chemin Cache Streamlit
+        return pd.read_parquet(render_path)
+    
+    # 2) Local cache
     local_path = LOCAL_CACHE_DIR / file_name
     if local_path.exists():
-        try:
-            return pd.read_parquet(local_path)
-        except Exception as e:
-            st.warning(f"Erreur lecture Cache local → {e}")
-
-    # 3) Fallback Git (repo cloné automatiquement par Render)
-    git_path = GIT_REPO_DIR / file_name
-    if git_path.exists():
-        try:
-            df = pd.read_parquet(git_path)
-
-            # On sauvegarde en cache local pour les prochaines lectures
-            LOCAL_CACHE_DIR.mkdir(exist_ok=True)
-            df.to_parquet(local_path)
-
-            return df
-        except Exception as e:
-            st.error(f"Erreur lecture fichier dans Git → {e}")
-
-    # 4) Fichier absent partout
-    st.error(f"Fichier introuvable : {file_name}")
-    return pd.DataFrame()
+        return pd.read_parquet(local_path)
+    
+    # 3) GitHub RAW fallback
+    github_url = RAW_BASE + file_name
+    try:
+        r = requests.get(github_url)
+        r.raise_for_status()
+        df = pd.read_parquet(BytesIO(r.content))
+        st.info(f"{file_name} chargé depuis GitHub Data_IDL")
+        return df
+    except Exception as e:
+        st.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
+        return pd.DataFrame()
 
 def save_parquet_local(df, file_name):
     """
@@ -491,13 +490,13 @@ def Analyse_stock():
     st.set_page_config(layout="wide")
 
     # --- Lire UNIQUEMENT depuis Render ---
-    df_article_euros = load_parquet_local("article_euros.parquet")
-    df_ecart_stock_prev = load_parquet_local("ecart_stock_prev.parquet")
-    df_ecart_stock_last = load_parquet_local("ecart_stock_last.parquet")
-    df_reception = load_parquet_local("reception.parquet")
-    df_sorties = load_parquet_local("sorties.parquet")
-    df_inventaire = load_parquet_local("inventaire.parquet")
-    df_mvt_stock = load_parquet_local("mvt_stock.parquet")
+    df_article_euros = load_parquet("article_euros.parquet")
+    df_ecart_stock_prev = load_parquet("ecart_stock_prev.parquet")
+    df_ecart_stock_last = load_parquet("ecart_stock_last.parquet")
+    df_reception = load_parquet("reception.parquet")
+    df_sorties = load_parquet("sorties.parquet")
+    df_inventaire = load_parquet("inventaire.parquet")
+    df_mvt_stock = load_parquet("mvt_stock.parquet")
 
     if df_article_euros.empty:
         st.stop()
