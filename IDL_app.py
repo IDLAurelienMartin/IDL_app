@@ -752,8 +752,10 @@ def Analyse_stock():
             st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
             st.stop()
 
-    # --- Reconstruction du chemin ---
-    file_parquet = None
+    # --- CORRECTION CRITIQUE ---
+    # On garde seulement le nom du fichier parquet
+    file_last = Path(file_last).name
+
 
     # Render
     if (RENDER_CACHE_DIR / file_last).exists():
