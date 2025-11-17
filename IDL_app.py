@@ -734,10 +734,12 @@ def Analyse_stock():
     if file_last_txt.exists():
         with open(file_last_txt, "r", encoding="utf-8") as f:
             file_last = f.read().strip()
+
     # 2) Local cache
     elif (LOCAL_CACHE_DIR / "file_last.txt").exists():
         with open(LOCAL_CACHE_DIR / "file_last.txt", "r", encoding="utf-8") as f:
             file_last = f.read().strip()
+
     # 3) GitHub RAW fallback
     else:
         github_url = RAW_BASE + "file_last.txt"
@@ -746,9 +748,36 @@ def Analyse_stock():
             r.raise_for_status()
             file_last = r.text.strip()
             st.info("file_last.txt chargé depuis GitHub Data_IDL")
-        except Exception as e:
+        except Exception:
             st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
             st.stop()
+
+    # --- Reconstruction du chemin ---
+    file_parquet = None
+
+    # Render
+    if (RENDER_CACHE_DIR / file_last).exists():
+        file_parquet = RENDER_CACHE_DIR / file_last
+
+    # Local
+    elif (LOCAL_CACHE_DIR / file_last).exists():
+        file_parquet = LOCAL_CACHE_DIR / file_last
+
+    # GitHub RAW
+    else:
+        file_parquet = RAW_BASE + file_last
+
+    # Sécurité
+    if isinstance(file_parquet, Path) and not file_parquet.exists():
+        st.error(f"Fichier parquet introuvable : {file_parquet}")
+        st.stop()
+
+    # Chargement
+    if isinstance(file_parquet, Path):
+        df = pd.read_parquet(file_parquet)
+    else:
+        df = pd.read_parquet(file_parquet, engine="pyarrow")
+
     # --- Chargement du dernier parquet ---
     parquet_path = Path(file_last).with_suffix(".parquet")
     if not parquet_path.exists():
