@@ -727,26 +727,28 @@ def Analyse_stock():
     st.divider()
 
 
-    # --- Lecture du chemin du dernier fichier parquet ---
-    render_cache_dir = Path("/opt/render/project/src/render_cache")
-    file_last_txt = render_cache_dir / "file_last.txt"
-
-    # --- Debug : afficher le contenu des dossiers ---
-    cache_dir = Path("/opt/render/project/src/render_cache")
-    st.write("Fichiers dans render_cache :", list(cache_dir.glob("*")))
-
-    tmp_dir = Path("/tmp")
-    st.write("Fichiers dans /tmp :", list(tmp_dir.glob("*")))
-
     file_last = None
+    file_last_txt = RENDER_CACHE_DIR / "file_last.txt"
+
+    # 1) Render cache
     if file_last_txt.exists():
         with open(file_last_txt, "r", encoding="utf-8") as f:
             file_last = f.read().strip()
-
-    if not file_last:
-        st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
-        st.stop()
-
+    # 2) Local cache
+    elif (LOCAL_CACHE_DIR / "file_last.txt").exists():
+        with open(LOCAL_CACHE_DIR / "file_last.txt", "r", encoding="utf-8") as f:
+            file_last = f.read().strip()
+    # 3) GitHub RAW fallback
+    else:
+        github_url = RAW_BASE + "file_last.txt"
+        try:
+            r = requests.get(github_url)
+            r.raise_for_status()
+            file_last = r.text.strip()
+            st.info("file_last.txt chargé depuis GitHub Data_IDL")
+        except Exception as e:
+            st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
+            st.stop()
     # --- Chargement du dernier parquet ---
     parquet_path = Path(file_last).with_suffix(".parquet")
     if not parquet_path.exists():
