@@ -2,13 +2,10 @@
 import sys
 from pathlib import Path
 import pandas as pd
-import shutil
 from datetime import datetime
 import subprocess
 import os
-import requests
-import base64
-import json
+import shutil
 
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -17,33 +14,13 @@ from preprocess_stock import load_data, preprocess_data
 # ===============================================
 # Configuration Render / GitHub
 # ===============================================
-SOURCE_FOLDER = Path("/opt/render/project/src/render_cache")
-DEST_FOLDER = Path("/opt/render/project/src/Data_app")  # clone local du repo GitHub
+RENDER_CACHE = Path("/opt/render/project/src/render_cache")  # cache utilisé par Render
+GITHUB_LOCAL = Path("/opt/render/project/src/Data_app")      # clone local du repo GitHub
 GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
-# =====================================================
-# Sauvegarde automatique vers GitHub (push)
-# =====================================================
-def backup_to_github(source_path, dest_path, branch="main"):
-    source = Path(source_path)
-    dest = Path(dest_path)
-
-    shutil.copytree(source, dest, dirs_exist_ok=True)
-    print(f"Fichiers copiés de {source} vers {dest}")
-
-    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    subprocess.run(["git", "add", "."], cwd=dest, check=False)
-    try:
-        subprocess.run(["git", "commit", "-m", f"Backup automatique {now}"], cwd=dest, check=True)
-    except subprocess.CalledProcessError:
-        print("Aucun changement à committer.")
-
-    subprocess.run(["git", "push", "origin", branch], cwd=dest, check=False)
-    print("Push GitHub terminé.")
 
 # =====================================================
 # Fonctions utilitaires
@@ -68,36 +45,6 @@ def update_emplacement(row):
     else:
         return emp
 
-# =====================================================
-# Fonctions utilitaires
-# =====================================================
-def update_file_on_github(file_path: str, content_str: str, commit_message: str):
-    """
-    Met à jour ou crée un fichier sur GitHub via l'API.
-    """
-    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
-    
-    # Vérifier si le fichier existe pour récupérer le sha
-    r = requests.get(url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
-    if r.status_code == 200:
-        sha = r.json()["sha"]
-    else:
-        sha = None
-
-    data = {
-        "message": commit_message,
-        "content": base64.b64encode(content_str.encode()).decode(),
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        data["sha"] = sha
-
-    r = requests.put(url, headers={"Authorization": f"token {GITHUB_TOKEN}"},
-                     data=json.dumps(data))
-    if r.status_code in [200, 201]:
-        print(f"Fichier {file_path} mis à jour dans GitHub.")
-    else:
-        print(f"Erreur {r.status_code} : {r.text}")
 
 # =====================================================
 # Pipeline complet : GitHub → Preprocess → Parquet → GitHub
@@ -105,7 +52,7 @@ def update_file_on_github(file_path: str, content_str: str, commit_message: str)
 def prepare_stock_data():
     print("\n=== SCRIPT prepare_stock_data ===")
 
-    # === 1) Chargement GitHub ===
+    # 1) Chargement depuis GitHub
     (
         df_mvt_stock,
         df_reception,
@@ -115,9 +62,9 @@ def prepare_stock_data():
         df_ecart_stock_last,
         df_article_euros,
         file_last,
-    ) = load_data()        # 100% GitHub !
+    ) = load_data()        # 100% GitHub
 
-    # === 2) Prétraitement ===
+    # 2) Prétraitement
     (
         df_ecart_stock_prev,
         df_ecart_stock_last,
@@ -136,10 +83,10 @@ def prepare_stock_data():
         df_mvt_stock,
     )
 
-    # === 3) Sauvegarde Parquet directement dans GitHub local ===
-    output_dir = DEST_FOLDER / "Cache"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Dossier local GitHub pour parquets : {output_dir}")
+    # 3) Sauvegarde Parquet dans GitHub local
+    github_cache = GITHUB_LOCAL / "Cache"
+    github_cache.mkdir(parents=True, exist_ok=True)
+    print(f"Dossier local GitHub pour parquets : {github_cache}")
 
     datasets = {
         "mvt_stock": df_mvt_stock,
@@ -152,38 +99,51 @@ def prepare_stock_data():
     }
 
     for name, df in datasets.items():
-        path = output_dir / f"{name}.parquet"
+        path = github_cache / f"{name}.parquet"
         if not df.empty:
             df.to_parquet(path, index=False)
             print(f"{name}.parquet sauvegardé ({len(df)} lignes)")
         else:
             print(f"{name} est vide — ignoré.")
 
-    # === 4) Enregistrer le dernier fichier traité ===
-    file_last_parquet = output_dir / "ecart_stock_last.parquet"
-    with open(output_dir / "file_last.txt", "w", encoding="utf-8") as f:
+    # Enregistrer le dernier fichier traité
+    file_last_parquet = github_cache / "ecart_stock_last.parquet"
+    with open(github_cache / "file_last.txt", "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
-
     print(f"Dernier fichier écart stock : {file_last_parquet}")
 
-    # === 5) Commit & push vers GitHub ===
-    subprocess.run(["git", "add", "."], cwd=DEST_FOLDER, check=False)
+    # 4) Commit & push vers GitHub
+    subprocess.run(["git", "add", "."], cwd=GITHUB_LOCAL, check=False)
     try:
         subprocess.run(
             ["git", "commit", "-m", f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
-            cwd=DEST_FOLDER,
+            cwd=GITHUB_LOCAL,
             check=True
         )
+        subprocess.run(["git", "push", "origin", GITHUB_BRANCH], cwd=GITHUB_LOCAL, check=False)
+        print("Push GitHub terminé avec les parquets.")
     except subprocess.CalledProcessError:
         print("Aucun changement à committer.")
-    subprocess.run(["git", "push", "origin", GITHUB_BRANCH], cwd=DEST_FOLDER, check=False)
-    print("Push GitHub terminé avec les parquets.")
 
     print("\n=== FIN DU TRAITEMENT ===\n")
+
+
+# =====================================================
+# Copier les Parquet depuis GitHub local vers Render cache
+# =====================================================
+def copy_parquets_to_render_cache(github_local: Path, render_cache: Path):
+    render_cache.mkdir(parents=True, exist_ok=True)
+    github_cache = github_local / "Cache"
+
+    for file in github_cache.glob("*.parquet"):
+        shutil.copy(file, render_cache)
+    shutil.copy(github_cache / "file_last.txt", render_cache)
+    print(f"Parquets copiés dans le cache Render : {render_cache}")
+
 
 # =====================================================
 # Exécution principale
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    backup_to_github(SOURCE_FOLDER, DEST_FOLDER)
+    copy_parquets_to_render_cache(GITHUB_LOCAL, RENDER_CACHE)
