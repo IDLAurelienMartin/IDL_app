@@ -14,17 +14,14 @@ import json
 sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
 
-
 # ===============================================
 # Configuration Render / GitHub
 # ===============================================
 SOURCE_FOLDER = Path("/opt/render/project/src/render_cache")
-DEST_FOLDER = Path("/opt/render/project/src/Data_app")
-
+DEST_FOLDER = Path("/opt/render/project/src/Data_app")  # clone local du repo GitHub
 GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
-FILE_PATH = "Cache/file_last.txt" 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
 # =====================================================
@@ -47,7 +44,6 @@ def backup_to_github(source_path, dest_path, branch="main"):
 
     subprocess.run(["git", "push", "origin", branch], cwd=dest, check=False)
     print("Push GitHub terminé.")
-
 
 # =====================================================
 # Fonctions utilitaires
@@ -72,7 +68,9 @@ def update_emplacement(row):
     else:
         return emp
 
-
+# =====================================================
+# Fonctions utilitaires
+# =====================================================
 def update_file_on_github(file_path: str, content_str: str, commit_message: str):
     """
     Met à jour ou crée un fichier sur GitHub via l'API.
@@ -97,14 +95,12 @@ def update_file_on_github(file_path: str, content_str: str, commit_message: str)
     r = requests.put(url, headers={"Authorization": f"token {GITHUB_TOKEN}"},
                      data=json.dumps(data))
     if r.status_code in [200, 201]:
-        print(f"✅ Fichier {file_path} mis à jour dans GitHub.")
+        print(f"Fichier {file_path} mis à jour dans GitHub.")
     else:
-        print(f"❌ Erreur {r.status_code} : {r.text}")
-
-
+        print(f"Erreur {r.status_code} : {r.text}")
 
 # =====================================================
-# Pipeline complet : GitHub → Preprocess → Parquet
+# Pipeline complet : GitHub → Preprocess → Parquet → GitHub
 # =====================================================
 def prepare_stock_data():
     print("\n=== SCRIPT prepare_stock_data ===")
@@ -140,10 +136,10 @@ def prepare_stock_data():
         df_mvt_stock,
     )
 
-    # === 3) Sauvegarde Parquet sur Render ===
-    output_dir = DEST_FOLDER / "render_data"
+    # === 3) Sauvegarde Parquet directement dans GitHub local ===
+    output_dir = DEST_FOLDER / "Cache"
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Dossier rendu : {output_dir}")
+    print(f"Dossier local GitHub pour parquets : {output_dir}")
 
     datasets = {
         "mvt_stock": df_mvt_stock,
@@ -168,13 +164,22 @@ def prepare_stock_data():
     with open(output_dir / "file_last.txt", "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
 
-    print("\n=== SYNTHÈSE ===")
-    print(f"Parquets générés dans : {output_dir}")
     print(f"Dernier fichier écart stock : {file_last_parquet}")
 
+    # === 5) Commit & push vers GitHub ===
+    subprocess.run(["git", "add", "."], cwd=DEST_FOLDER, check=False)
+    try:
+        subprocess.run(
+            ["git", "commit", "-m", f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
+            cwd=DEST_FOLDER,
+            check=True
+        )
+    except subprocess.CalledProcessError:
+        print("Aucun changement à committer.")
+    subprocess.run(["git", "push", "origin", GITHUB_BRANCH], cwd=DEST_FOLDER, check=False)
+    print("Push GitHub terminé avec les parquets.")
 
     print("\n=== FIN DU TRAITEMENT ===\n")
-
 
 # =====================================================
 # Exécution principale

@@ -32,12 +32,12 @@ def ensure_cache_cloned():
         print("🌀 Cache local introuvable. Clonage depuis GitHub...")
         result = subprocess.run(["git", "clone", GITHUB_REPO, str(CACHE_DIR)], capture_output=True, text=True)
         if result.returncode != 0:
-            print("❌ Erreur lors du clonage du dépôt :")
+            print("Erreur lors du clonage du dépôt :")
             print(result.stderr)
         else:
-            print("✅ Cache cloné avec succès depuis GitHub.")
+            print("Cache cloné avec succès depuis GitHub.")
     else:
-        print("✅ Cache local déjà présent.")
+        print("Cache local déjà présent.")
 
 if __name__ == "__main__":
     ensure_cache_cloned()

@@ -572,7 +572,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
         
-        parquet_path = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache\ecart_stock_last.parquet")
+        parquet_path = Path(r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Cache/ecart_stock_last.parquet")
 
         if parquet_path.exists():
             try:
