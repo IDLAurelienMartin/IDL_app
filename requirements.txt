@@ -61,9 +61,11 @@ python-barcode
 streamlit-aggrid
 fpdf
 openpyxl
-fitz
+
 PyPDF2
 GitPython
+PyMuPDF==1.26.6
+
 
 
 
