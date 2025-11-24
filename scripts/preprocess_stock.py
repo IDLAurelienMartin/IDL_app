@@ -96,54 +96,53 @@ def get_excel_creation_date_from_github(path: str) -> datetime:
 def load_data():
     """
     Charge toutes les données depuis GitHub.
-    Sans liste manuelle, via API GitHub.
+    Tous les fichiers sont récupérés dynamiquement via l'API GitHub.
     """
 
     # ----------------------------------------
-    #  Inventaire
+    # Inventaire
     # ----------------------------------------
     INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
-
     try:
         date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
         print("Date interne inventaire :", date_ref)
-    except:
-        print("Erreur lecture métadonnées inventaire -> fallback now()")
+    except Exception as e:
+        print("Erreur lecture métadonnées inventaire -> fallback now()", e)
         date_ref = datetime.now()
 
     df_inventaire = read_excel_from_github(INVENTORY_PATH)
 
     # ----------------------------------------
-    # Chargement automatique dossiers
+    # Fonction pour charger tous les fichiers Excel d'un dossier GitHub
     # ----------------------------------------
     def load_folder(folder):
         files = github_list_excel_files_recursive(folder)
+        dfs = [read_excel_from_github(f) for f in files]
+        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-        dfs = []
-        for f in files:
-            dfs.append(read_excel_from_github(f))
-
-        if dfs:
-            return pd.concat(dfs, ignore_index=True)
-        return pd.DataFrame()
-
+    # Chargement des données
     df_mvt_stock = load_folder("Mvt_stock")
     df_reception = load_folder("Historique_Reception")
     df_sorties = load_folder("Historique_des_Sorties")
 
     # ----------------------------------------
-    # ECART STOCK : derniers fichiers automatiquement
+    # ECART STOCK : dernier et avant-dernier fichiers
     # ----------------------------------------
     ecart_files = sorted(github_list_excel_files_recursive("Ecart_Stock"))
-
     if len(ecart_files) < 2:
         raise FileNotFoundError("Pas assez de fichiers d’écart stock dans GitHub.")
 
-    file_prev = ecart_files[-2]
-    file_last = ecart_files[-1]
+    file_prev = ecart_files[-2]  # avant-dernier
+    file_last = ecart_files[-1]  # dernier
 
     df_ecart_stock_prev = read_excel_from_github(file_prev)
     df_ecart_stock_last = read_excel_from_github(file_last)
+
+    # Sauvegarde du nom du dernier fichier pour référence (ex: cache Render)
+    render_cache_dir = Path("/opt/render/project/src/render_cache")
+    render_cache_dir.mkdir(parents=True, exist_ok=True)
+    file_last_txt = render_cache_dir / "file_last.txt"
+    file_last_txt.write_text(file_last)  # on écrit le chemin GitHub, pas local
 
     # ----------------------------------------
     # Article € (fichier unique)
@@ -151,7 +150,7 @@ def load_data():
     df_article_euros = read_excel_from_github("Article_euros.xlsx")
 
     # ----------------------------------------
-    # SYNTHÈSE
+    # Synthèse
     # ----------------------------------------
     print("\n=== SYNTHÈSE GITHUB ===")
     print("Mvt Stock :", len(df_mvt_stock))
@@ -170,7 +169,7 @@ def load_data():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
-        file_last,
+        file_last,  # chemin GitHub du dernier fichier
     )
 
 # =========================
