@@ -1,10 +1,10 @@
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import landscape, A4
 from reportlab.lib.utils import ImageReader
 import qrcode
-from barcode.ean import EAN13
+from barcode.ean import EAN13, EAN8
 from barcode.writer import ImageWriter
 from pathlib import Path
 import glob
@@ -22,6 +22,8 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 import requests
+import fitz
+from PyPDF2 import PdfReader, PdfWriter
 
 
 def tab_home():
@@ -767,7 +769,7 @@ def Analyse_stock():
 
     # GitHub RAW
     else:
-        file_parquet = RAW_BASE + file_last
+        file_parquet = file_last
 
     # Sécurité
     if isinstance(file_parquet, Path) and not file_parquet.exists():
@@ -1224,6 +1226,257 @@ def Analyse_stock():
 
 def tab_Detrompeurs():
     st.title("Détrompeurs")
+    st.write("Générateur de PDF de détrompeurs à partir d'un MGB.")
+
+    # --- Fichiers sources ---
+    fichier_excel_ean = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
+    fichier_etat_stock = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Etat_Stock.xlsm"
+    fichier_pdf_vierge = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/detrompeur_vierge.pdf"
+    dossier_sortie = r"https://github.com/IDLAurelienMartin/Data_IDL/tree/main/Detrompeur/Detrompeur"
+
+    # --- Lire toutes les feuilles Excel ---
+    all_sheets = pd.read_excel(fichier_excel_ean, sheet_name=None, engine='openpyxl')
+    df_ean = pd.concat(all_sheets.values(), ignore_index=True)
+    df_etat_stock = pd.read_excel(fichier_etat_stock, engine='openpyxl')
+
+    # --- Préparer le DataFrame final avec uniquement les colonnes utiles ---
+    df_final = df_etat_stock[['MGB', 'Description', 'Ref Metro']].copy()
+
+    # Ne garder qu'une seule ligne par MGB
+    df_final = df_final.drop_duplicates(subset='MGB', keep='first')
+    remplacement = {"Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
+                "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã": "à", "¤": "", "«": "", "»": ""}
+    if 'Description' in df_final.columns:
+        for ancien, nouveau in remplacement.items():
+            df_final["Description"] = df_final["Description"].str.replace(ancien, nouveau, regex=False)
+
+    # Ajouter la colonne EAN depuis df_ean en faisant correspondre le MGB
+    df_final['EAN'] = df_final['MGB'].apply(
+        lambda mgb: str(df_ean.loc[df_ean['MGB'] == mgb, 'CODE EAN'].values[0])
+        if mgb in df_ean['MGB'].values else ""
+    )
+
+    # --- Sélecteur MGB ---
+    liste_mgb = df_final['MGB'].dropna().unique()# Saisie libre
+    mgb_saisie = st.text_input("Taper le MGB ici et appuyer sur Entrée pour voir les suggestions")
+
+    # Filtrer les suggestions à partir de la saisie
+    suggestions = [m for m in liste_mgb if mgb_saisie.upper() in str(m).upper()]
+
+    # Afficher les suggestions si disponibles
+    if suggestions:
+        mgb_input = st.selectbox("Suggestions de MGB", options=suggestions)
+    else:
+        mgb_input = mgb_saisie  # utiliser la saisie telle quelle si aucune suggestion
+
+    
+    # --- Question modification si PDF existe déjà ---
+    nom_fichier = f"Detrompeur_{mgb_input}.pdf"
+    chemin_final = os.path.join(dossier_sortie, nom_fichier)
+    if os.path.exists(chemin_final):
+        st.warning("Un PDF pour ce MGB existe déjà :")
+    
+        # Ouvrir le PDF
+        pdf = fitz.open(chemin_final)
+        page = pdf[0]  # première page
+        pix = page.get_pixmap()  # convertit en image
+        img_bytes = pix.tobytes("png")  # obtenir en PNG
+        
+        # Afficher l'image dans Streamlit
+        st.image(img_bytes, caption="Aperçu du PDF existant", use_container_width=True)
+
+        modifier = st.radio("Voulez-vous le modifier ?", ["Non", "Oui"])
+
+        if modifier == "Non":
+            st.download_button(
+                label="Télécharger le PDF existant",
+                data=open(chemin_final, "rb").read(),
+                file_name=f"{os.path.basename(chemin_final)}",
+                mime="application/pdf"
+            )
+            st.info("Vous pouvez télécharger le PDF existant ci-dessus.")
+        else:
+            # --- Upload photos ---
+            photo_ok = st.file_uploader("Charger la photo OK (.jpeg)", type=['jpeg'])
+            photo_ko = st.file_uploader("Charger la photo KO (.jpeg)", type=['jpeg'])
+    else:
+            photo_ok = st.file_uploader("Charger la photo OK (.jpeg)", type=['jpeg'])
+            photo_ko = st.file_uploader("Charger la photo KO (.jpeg)", type=['jpeg'])
+
+    if st.button("Créer PDF") and mgb_input:
+
+        # --- Chercher la ligne correspondant au MGB dans df_final ---
+        ligne = df_final[df_final['MGB'] == mgb_input]
+
+        if ligne.empty:
+            st.error("MGB non trouvé dans l'état stock.")
+            return
+        
+        # Récupération des informations
+        designation = ligne['Description'].values[0]
+        ref_metro = str(ligne['Ref Metro'].values[0]).split('.')[0]
+        ean = ligne['EAN'].values[0]
+
+        if pd.notna(ean):
+            st.info(f"L’EAN existant pour ce MGB : {ean}")
+        else:
+            st.warning("Pas d’EAN existant pour ce MGB.")
+            ean = st.text_input("Ajouter un EAN manuellement :", "")
+            if ean:
+                # Ajouter la ligne dans df_ean et enregistrer
+                nouvelle_ligne = pd.DataFrame([{
+                    'Description': designation,
+                    'MGB': mgb_input,
+                    'CODE EAN': ean
+                }])
+                df_ean = pd.concat([df_ean, nouvelle_ligne], ignore_index=True)
+                df_ean.to_excel(fichier_excel_ean, index=False)
+                st.success(f"EAN {ean} ajouté dans {fichier_excel_ean}.")
+
+        
+
+        # --- Créer PDF temporaire avec texte et images ---
+        buffer_txt = BytesIO()
+        page_width, page_height = landscape(A4)
+        c = canvas.Canvas(buffer_txt, pagesize=(page_width, page_height))
+
+        # Texte
+        x_start = 50
+        y_start = page_height - 160
+        max_width = page_width / 2 - 50
+        text_obj = c.beginText()
+        text_obj.setTextOrigin(x_start, y_start)
+        text_obj.setFont("Helvetica-Bold", 38)
+        text_obj.setFillColor(colors.darkblue)
+        words = designation.split()
+        line = ""
+        for word in words:
+            test_line = f"{line} {word}".strip()
+            if c.stringWidth(test_line, "Helvetica-Bold", 38) <= max_width:
+                line = test_line
+            else:
+                text_obj.textLine(line)
+                line = word
+        if line:
+            text_obj.textLine(line)
+        c.drawText(text_obj)
+
+        # ref metro
+        c.setFont("Helvetica-Bold", 38)
+        c.setFillColor(colors.darkblue)    
+        c.drawString(x_start + 180, y_start - 165, f"{ref_metro}")
+
+        # --- Fonctions QR, EAN, croix rouge et redimensionnement ---
+        def generate_qr(MGB):
+            qr_img = qrcode.make(MGB).convert("RGB")
+            qr_size = 100
+            qr_img = qr_img.resize((qr_size, qr_size))
+            return qr_img, qr_size, qr_size
+
+        def generate_ean(ean_code: str):
+            if not ean_code:
+                return None, 0, 0
+            if len(ean_code) == 13:
+                ean = EAN13(ean_code, writer=ImageWriter())
+            elif len(ean_code) == 8:
+                ean = EAN8(ean_code, writer=ImageWriter())
+            else:
+                st.error("Le code EAN doit faire 8 ou 13 chiffres.")
+                st.stop()
+            buffer = BytesIO()
+            ean.write(buffer)
+            buffer.seek(0)
+            ean_img = Image.open(buffer)
+            ean_width, ean_height = 300, 150
+            ean_img = ean_img.resize((ean_width, ean_height))
+            return ean_img, ean_width, ean_height
+
+        def ajouter_croix_rouge(image_stream):
+            img = Image.open(image_stream).convert("RGBA")
+            draw = ImageDraw.Draw(img)
+            w, h = img.size
+            thickness = max(5, w // 100)
+            draw.line((0, 0, w, h), fill=(255, 0, 0, 255), width=thickness)
+            draw.line((0, h, w, 0), fill=(255, 0, 0, 255), width=thickness)
+            buffer = BytesIO()
+            img.save(buffer, format="PNG")
+            buffer.seek(0)
+            return buffer
+
+        def get_image_size(file, max_width, max_height):
+            if isinstance(file, Image.Image):
+                img = file
+            else:
+                img = Image.open(file)
+            if img.width > img.height:
+                img = img.rotate(90, expand=True)
+            target_ratio = 2 / 3
+            w, h = img.size
+            current_ratio = w / h
+            if current_ratio > target_ratio:
+                new_w = int(h * target_ratio)
+                left = (w - new_w) // 2
+                img = img.crop((left, 0, left + new_w, h))
+            elif current_ratio < target_ratio:
+                new_h = int(w / target_ratio)
+                top = (h - new_h) // 2
+                img = img.crop((0, top, w, top + new_h))
+            ratio = min(max_width / img.width, max_height / img.height)
+            return img, img.width * ratio, img.height * ratio
+
+        quart_width = page_width * 0.25
+        max_width_img = quart_width - 20
+        max_height_img = page_height - 100
+        decalage = 15
+
+        # QR code
+        qr_img, qr_w, qr_h = generate_qr(mgb_input)
+        x_qr = page_width - qr_w - 10
+        y_qr = page_height - qr_h - 10
+        c.drawImage(ImageReader(qr_img), x_qr, y_qr, width=qr_w, height=qr_h)
+
+        # EAN
+        ean_img, ean_w, ean_h = generate_ean(ean)
+        if ean_img:
+            x_ean = 50
+            y_ean = 50
+            c.drawImage(ImageReader(ean_img), x_ean, y_ean, width=ean_w, height=ean_h)
+
+        # Photos OK/KO
+        if photo_ok:
+            img, img_w, img_h = get_image_size(photo_ok, max_width_img, max_height_img)
+            x_ok = page_width * 0.75 + (quart_width - img_w) / 2 - decalage
+            y_ok = page_height / 2 - img_h / 2
+            c.drawImage(ImageReader(img), x_ok, y_ok, width=img_w, height=img_h)
+
+        if photo_ko:
+            photo_ko_marked = ajouter_croix_rouge(photo_ko)
+            img, img_w, img_h = get_image_size(photo_ko_marked, max_width_img, max_height_img)
+            x_ko = page_width * 0.5 + (quart_width - img_w) / 2 - decalage
+            y_ko = page_height / 2 - img_h / 2
+            c.drawImage(ImageReader(img), x_ko, y_ko, width=img_w, height=img_h)
+
+        c.save()
+        buffer_txt.seek(0)
+
+        # --- Fusionner avec PDF vierge ---
+        reader_vierge = PdfReader(fichier_pdf_vierge)
+        writer = PdfWriter()
+        page_vierge = reader_vierge.pages[0]
+        reader_txt = PdfReader(buffer_txt)
+        page_txt = reader_txt.pages[0]
+        page_vierge.merge_page(page_txt)
+        writer.add_page(page_vierge)
+
+        # --- Enregistrer PDF final ---
+        nom_fichier = f"Detrompeur_{mgb_input}.pdf"
+        chemin_final = f"{dossier_sortie}\\{nom_fichier}"
+        with open(chemin_final, "wb") as f_out:
+            writer.write(f_out)
+
+        st.success(f"PDF généré avec succès et enregistré sous : {chemin_final}")
+        st.download_button("Télécharger PDF", data=open(chemin_final, "rb").read(),
+                           file_name=nom_fichier, mime="application/pdf")
 
 # Configuration des onglets
 tabs = {
