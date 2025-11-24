@@ -16,7 +16,6 @@ import io
 import subprocess
 from datetime import datetime
 import streamlit as st
-from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows   
 from git import Repo
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
@@ -24,6 +23,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 import requests
 import fitz
 from PyPDF2 import PdfReader, PdfWriter
+import sys
+
+from .scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
 
 
 def tab_home():
