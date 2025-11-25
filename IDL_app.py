@@ -24,7 +24,7 @@ import requests
 import fitz
 from PyPDF2 import PdfReader, PdfWriter
 import sys
-from IDL.scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
+from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
 
 
 def tab_home():
