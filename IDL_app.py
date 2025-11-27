@@ -653,7 +653,7 @@ def Analyse_stock():
 
     # ---------- tri des tableaux : par date/heure si disponible ----------
     # prefer Date_Heure else use existing diff ordering
-    date_col_candidates = ["Date_Heure", "Date", "Datetime"]
+    date_col_candidates = ["Date", "Heure"]
     date_col = next((c for c in date_col_candidates if c in df_affiche.columns), None)
     if date_col:
         # try convert if needed
@@ -712,7 +712,7 @@ def Analyse_stock():
 
     # tri des tableaux détaillés par Date_Heure si existant
     def sort_if_date(df_):
-        for c in ["Date_Heure", "Date", "Datetime", "DateTime"]:
+        for c in ["Date", "Heure"]:
             if c in df_.columns:
                 df_[c] = pd.to_datetime(df_[c], errors="coerce")
                 return df_.sort_values(by=[c], ascending=True)
