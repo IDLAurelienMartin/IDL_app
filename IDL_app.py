@@ -61,7 +61,6 @@ def load_font(font_size: int):
         st.error(f"Erreur chargement police : {e}")
         return ImageFont.load_default()
 
-
 def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
@@ -441,8 +440,6 @@ def tab_QR_Codes():
                     if st.button("Effacer le code barre"):
                             st.experimental_rerun()
 
-
-
 def load_parquet(file_name):
     """
     Charge un parquet en suivant cet ordre :
@@ -752,26 +749,29 @@ def Analyse_stock():
         st.warning(f"Aucun fichier d'écart stock récent trouvé (file_last non défini).\n{e}")
         st.stop()
 
+    # --- On garde seulement le nom du fichier (au cas où file_last.txt contiendrait une URL complète) ---
+    file_last_name = Path(file_last).name
+
     # --- Détermination du chemin réel du fichier parquet ---
     parquet_path = None
 
     # Render cache
-    if (RENDER_CACHE_DIR / file_last).exists():
-        parquet_path = RENDER_CACHE_DIR / file_last
+    if (RENDER_CACHE_DIR / file_last_name).exists():
+        parquet_path = RENDER_CACHE_DIR / file_last_name
     # Local cache
-    elif (LOCAL_CACHE_DIR / file_last).exists():
-        parquet_path = LOCAL_CACHE_DIR / file_last
+    elif (LOCAL_CACHE_DIR / file_last_name).exists():
+        parquet_path = LOCAL_CACHE_DIR / file_last_name
     # GitHub fallback : télécharger dans Render cache
     else:
         try:
-            github_parquet_url = RAW_BASE + file_last
+            github_parquet_url = RAW_BASE + file_last_name  # RAW_BASE doit pointer vers le dossier RAW GitHub
             r = requests.get(github_parquet_url)
             r.raise_for_status()
-            parquet_path = RENDER_CACHE_DIR / file_last
+            parquet_path = RENDER_CACHE_DIR / file_last_name
             parquet_path.write_bytes(r.content)
-            st.info(f"{file_last} téléchargé depuis GitHub dans Render cache.")
+            st.info(f"{file_last_name} téléchargé depuis GitHub dans Render cache.")
         except Exception as e:
-            st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last}\n{e}")
+            st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last_name}\n{e}")
             st.stop()
 
     # --- Chargement du parquet ---
@@ -781,6 +781,7 @@ def Analyse_stock():
     except Exception as e:
         st.error(f"Erreur lors du chargement du parquet : {parquet_path}\n{e}")
         st.stop()
+
 
     # --- Initialisation de la session Streamlit ---
     if "df_comments" not in st.session_state:
@@ -1230,26 +1231,26 @@ def tab_Detrompeurs():
     # Dossier sortie local sur Render
     dossier_sortie = Path("Detrompeur_output")
     dossier_sortie.mkdir(exist_ok=True)
-
+ 
     # -------------------- Télécharger PDF vierge --------------------
     fichier_pdf_vierge = dossier_sortie / "detrompeur_vierge.pdf"
-    if not fichier_pdf_vierge.exists():
-        r = requests.get(fichier_pdf_vierge_url)
-        with open(fichier_pdf_vierge, "wb") as f:
-            f.write(r.content)
+    r = requests.get(fichier_pdf_vierge_url)
+    r.raise_for_status()
+    with open(fichier_pdf_vierge, "wb") as f:
+        f.write(r.content)
 
     # -------------------- Télécharger Excel EAN --------------------
     file_excel_ean = dossier_sortie / "Liste_detrompeur_EAN.xlsx"
-    if not file_excel_ean.exists():
-        r = requests.get(file_excel_ean_url)
-        with open(file_excel_ean, "wb") as f:
-            f.write(r.content)
+    r = requests.get(file_excel_ean_url)
+    r.raise_for_status()
+    with open(file_excel_ean, "wb") as f:
+        f.write(r.content)
 
-    # -------------------- Télécharger cache --------------------
+    # -------------------- Télécharger cache Parquet --------------------
     cache_local = dossier_sortie / "etat_stock.parquet"
-    if not cache_local.exists():
-        r = requests.get(cache_url)
-        with open(cache_local, "wb") as f:
+    r = requests.get(cache_url)
+    r.raise_for_status()
+    with open(cache_local, "wb") as f:
             f.write(r.content)
 
     # -------------------- Charger df_ean --------------------
@@ -1262,9 +1263,9 @@ def tab_Detrompeurs():
     try:
         df_etat_stock = pd.read_parquet(cache_local)
     except Exception as e:
-        st.error(f"Erreur lors du chargement du cache : {e}")
+        st.error(f"Erreur lors du chargement du cache Parquet local : {e}")
         return
-
+    
     # -------------------- Saisie MGB --------------------
     liste_mgb = df_etat_stock['MGB'].dropna().unique()
     mgb_saisie = st.text_input("Taper le MGB ici et appuyer sur Entrée pour voir les suggestions")
