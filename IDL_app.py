@@ -478,17 +478,65 @@ def save_parquet_local(df, file_name):
     df.to_parquet(local_path, index=False)
     st.success(f"{file_name} sauvegardé dans Cache/")
 
-def git_commit_push(file_path: Path, message: str):
-    """
-    Commit et push automatique d'un fichier vers GitHub.
-    """
-    try:
-        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "add", str(file_path)], check=True)
-        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "commit", "-m", message], check=True)
-        subprocess.run(["git", "-C", str(GIT_REPO_DIR), "push"], check=True)
-        st.success(f"{file_path.name} poussé sur Git avec succès !")
-    except subprocess.CalledProcessError as e:
-        st.error(f"Erreur Git : {e}")
+def commit_and_push_github(local_repo: Path, branch: str):
+    # Ajouter tous les fichiers modifiés
+    subprocess.run(["git", "add", "."], cwd=local_repo, check=False)
+
+    # Vérifier s'il y a quelque chose à committer
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=local_repo
+    )
+
+    if result.returncode == 0:
+        # Pas de changement à committer
+        print("Aucun changement à committer.")
+    else:
+        # Commit avec horodatage
+        commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        try:
+            subprocess.run(
+                ["git", "commit", "-m", commit_message],
+                cwd=local_repo,
+                check=True
+            )
+            # Push vers GitHub
+            subprocess.run(["git", "push", "origin", branch], cwd=local_repo, check=False)
+            print("Push GitHub terminé avec les parquets.")
+        except subprocess.CalledProcessError as e:
+            print(f"Erreur lors du commit ou push : {e}")
+
+def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
+    # Conversion des colonnes
+    if date_col in df.columns:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    if heure_col in df.columns:
+        # Convertir en time uniquement
+        df[heure_col] = pd.to_datetime(df[heure_col], format="%H:%M:%S", errors="coerce").dt.time
+
+    # Créer colonne temporaire pour le tri
+    if date_col in df.columns:
+        if heure_col in df.columns:
+            df["DateHeure"] = df.apply(
+                lambda row: datetime.combine(row[date_col].date(), row[heure_col])
+                if pd.notna(row[heure_col]) else row[date_col],
+                axis=1
+            )
+            df.sort_values(by="DateHeure", ascending=False, inplace=True)
+        else:
+            df.sort_values(by=date_col, ascending=False, inplace=True)
+
+    # Harmoniser l'affichage
+    if date_col in df.columns:
+        df[date_col] = df[date_col].dt.strftime("%d/%m/%Y")
+    if heure_col in df.columns:
+        df[heure_col] = df[heure_col].apply(lambda t: t.strftime("%H:%M:%S") if pd.notna(t) else "")
+
+    # Supprimer colonne temporaire
+    if "DateHeure" in df.columns:
+        df.drop(columns="DateHeure", inplace=True)
+
+    return df
 
 def Analyse_stock():
 
@@ -643,31 +691,6 @@ def Analyse_stock():
     # ---------- enlever les consignes ----------
     df_affiche = df_filtered[~df_filtered["MGB_6"].astype(str).isin(MGB_consigne)].copy()
 
-    # ---------- tri des tableaux : par date puis heure ----------
-    date_col = "Date" if "Date" in df_affiche.columns else None
-    heure_col = "Heure" if "Heure" in df_affiche.columns else None
-
-    if date_col:
-        # Conversion au format datetime si nécessaire
-        df_affiche[date_col] = pd.to_datetime(df_affiche[date_col], errors="coerce")
-        
-        if heure_col:
-            # Si heure dispo, on combine date + heure pour trier correctement
-            df_affiche[heure_col] = pd.to_datetime(df_affiche[heure_col], errors="coerce").dt.time
-            df_affiche = df_affiche.sort_values(
-                by=[date_col, heure_col],
-                ascending=[False, False]  # du plus récent au plus ancien
-            )
-        else:
-            # Sinon, on trie juste par date
-            df_affiche = df_affiche.sort_values(by=date_col, ascending=False)
-    else:
-        # fallback previous behavior
-        df_affiche = df_affiche.reindex(
-            df_affiche["Difference_MMS-WMS"].abs().sort_values(ascending=False).index
-        )
-
-
     # ---------- merger difference précédente (batch) ----------
     if not df_ecart_stock_prev.empty:
         df_prev_diff = df_ecart_stock_prev[["MGB_6", "Difference_MMS-WMS"]].rename(columns={"Difference_MMS-WMS":"Difference_prev"})
@@ -713,17 +736,11 @@ def Analyse_stock():
     reception_info = df_reception[df_reception['MGB_6'] == mgb_selected].copy()
     sorties_info = df_sorties[df_sorties['MGB_6'] == mgb_selected].copy()
 
-    # tri des tableaux détaillés par Date_Heure si existant
-    def sort_if_date(df_):
-        for c in ["Date", "Heure"]:
-            if c in df_.columns:
-                df_[c] = pd.to_datetime(df_[c], errors="coerce")
-                return df_.sort_values(by=[c], ascending=True)
-        return df_
-    inventaire_info = sort_if_date(inventaire_info)
-    mvt_stock_info = sort_if_date(mvt_stock_info)
-    reception_info = sort_if_date(reception_info)
-    sorties_info = sort_if_date(sorties_info)
+    # ---------- tri des tableaux : par date puis heure ----------
+    df_affiche = harmoniser_et_trier(df_affiche)
+    mvt_stock_info = harmoniser_et_trier(mvt_stock_info)
+    reception_info = harmoniser_et_trier(reception_info)
+    sorties_info = harmoniser_et_trier(sorties_info)
 
     # ---------- métriques (utilitaire ajouter_totaux réutilisé) ----------
     totaux_stock = ajouter_totaux(stock_info, ["MMS_Stock","WMS_Stock","Difference_MMS-WMS","Valeur_Difference"])
@@ -927,7 +944,7 @@ def Analyse_stock():
                     st.session_state.df_comments = pd.concat([st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True)
                 # write once, then git push
                 st.session_state.df_comments.to_parquet(parquet_path, index=False)
-                git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
+                commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
                 # refresh local copies
                 st.experimental_rerun()
@@ -950,7 +967,7 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
                 st.session_state.df_comments.to_parquet(parquet_path, index=False)
-                git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
+                commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
                 st.experimental_rerun()
 
@@ -1124,8 +1141,7 @@ def Analyse_stock():
 
         # write parquet with comments after PDF generation (one save)
         st.session_state.df_comments.to_parquet(parquet_path, index=False)
-        git_commit_push(parquet_path, f"MAJ commentaires / export PDF {datetime.today().strftime('%Y-%m-%d')}")
-
+        commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
         st.success("PDF généré et commentaires sauvegardés.")
 
 
