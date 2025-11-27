@@ -492,13 +492,6 @@ def git_commit_push(file_path: Path, message: str):
         st.error(f"Erreur Git : {e}")
 
 def Analyse_stock():
-    import streamlit as st
-    import pandas as pd
-    import numpy as np
-    from datetime import datetime
-    from pathlib import Path
-    from fpdf import FPDF
-    import requests
 
     st.set_page_config(layout="wide")
 
@@ -651,19 +644,30 @@ def Analyse_stock():
     # ---------- enlever les consignes ----------
     df_affiche = df_filtered[~df_filtered["MGB_6"].astype(str).isin(MGB_consigne)].copy()
 
-    # ---------- tri des tableaux : par date/heure si disponible ----------
-    # prefer Date_Heure else use existing diff ordering
-    date_col_candidates = ["Date", "Heure"]
-    date_col = next((c for c in date_col_candidates if c in df_affiche.columns), None)
+    # ---------- tri des tableaux : par date puis heure ----------
+    date_col = "Date" if "Date" in df_affiche.columns else None
+    heure_col = "Heure" if "Heure" in df_affiche.columns else None
+
     if date_col:
-        # try convert if needed
+        # Conversion au format datetime si nécessaire
         df_affiche[date_col] = pd.to_datetime(df_affiche[date_col], errors="coerce")
-        df_affiche = df_affiche.sort_values(by=[date_col], ascending=False)
+        
+        if heure_col:
+            # Si heure dispo, on combine date + heure pour trier correctement
+            df_affiche[heure_col] = pd.to_datetime(df_affiche[heure_col], errors="coerce").dt.time
+            df_affiche = df_affiche.sort_values(
+                by=[date_col, heure_col],
+                ascending=[False, False]  # du plus récent au plus ancien
+            )
+        else:
+            # Sinon, on trie juste par date
+            df_affiche = df_affiche.sort_values(by=date_col, ascending=False)
     else:
         # fallback previous behavior
         df_affiche = df_affiche.reindex(
             df_affiche["Difference_MMS-WMS"].abs().sort_values(ascending=False).index
         )
+
 
     # ---------- merger difference précédente (batch) ----------
     if not df_ecart_stock_prev.empty:
