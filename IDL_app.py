@@ -38,6 +38,7 @@ GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 
 # On crée aussi le dossier Cache pour éviter les erreurs
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Dossiers ---
 RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule

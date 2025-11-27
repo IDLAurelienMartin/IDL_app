@@ -107,11 +107,10 @@ def prepare_stock_data():
 
     for name, df in datasets.items():
         path = github_cache / f"{name}.parquet"
-        if not df.empty:
-            df.to_parquet(path, index=False)
-            print(f"{name}.parquet sauvegardé ({len(df)} lignes)")
-        else:
-            print(f"{name} est vide — ignoré.")
+        # Toujours sauvegarder, même si vide
+        df.to_parquet(path, index=False)
+        print(f"{name}.parquet sauvegardé ({len(df)} lignes)")
+
 
     # Enregistrer le dernier fichier traité
     file_last_parquet = github_cache / "ecart_stock_last.parquet"
