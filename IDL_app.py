@@ -464,7 +464,6 @@ def load_parquet(file_name):
         r = requests.get(github_url)
         r.raise_for_status()
         df = pd.read_parquet(BytesIO(r.content))
-        st.info(f"{file_name} chargé depuis GitHub Data_IDL")
         return df
     except Exception as e:
         st.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
@@ -783,7 +782,6 @@ def Analyse_stock():
             r = requests.get(RAW_BASE + "file_last.txt")
             r.raise_for_status()
             file_last = r.text.strip()
-            st.info("file_last.txt chargé depuis GitHub Data_IDL")
     except Exception as e:
         st.warning(f"Aucun fichier d'écart stock récent trouvé (file_last non défini).\n{e}")
         st.stop()
@@ -801,7 +799,6 @@ def Analyse_stock():
             r.raise_for_status()
             parquet_path = RENDER_CACHE_DIR / file_last_name
             parquet_path.write_bytes(r.content)
-            st.info(f"{file_last_name} téléchargé depuis GitHub dans Render cache.")
         except Exception as e:
             st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last_name}\n{e}")
             st.stop()
