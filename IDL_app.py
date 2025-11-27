@@ -29,9 +29,6 @@ import numpy as np
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import base64
-from streamlit.runtime.scriptrunner import rerun
-
-
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
@@ -949,8 +946,7 @@ def Analyse_stock():
                 st.session_state.df_comments.to_parquet(parquet_path, index=False)
                 commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
-                # refresh local copies
-                rerun()
+                
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
         st.write(f"Suivi actuel : {choix_existant if choix_existant else 'Non défini'}")
@@ -972,8 +968,7 @@ def Analyse_stock():
                 st.session_state.df_comments.to_parquet(parquet_path, index=False)
                 commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
-                rerun()
-
+                
     # ---------- Génération du PDF trié par Suivi puis Date ----------
     if st.button("Générer le PDF du rapport"):
         df_for_pdf = st.session_state.df_comments.copy()
