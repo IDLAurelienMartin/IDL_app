@@ -1242,7 +1242,7 @@ def tab_Detrompeurs():
         df_ean = pd.DataFrame(columns=["Description", "MGB", "CODE EAN"])
 
     # -------------------- Charger fichier état stock --------------------
-    data_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
+    data_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL/tree/main/Cache")
     if not data_dir.exists():
         st.error(f"Le dossier cache OneDrive est introuvable : {data_dir}")
         return
