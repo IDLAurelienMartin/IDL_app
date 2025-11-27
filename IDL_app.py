@@ -1241,17 +1241,15 @@ def tab_Detrompeurs():
     except Exception:
         df_ean = pd.DataFrame(columns=["Description", "MGB", "CODE EAN"])
 
-    # -------------------- Charger fichier état stock --------------------
-    data_dir = Path(r"https://github.com/IDLAurelienMartin/Data_IDL/tree/main/Cache")
-    if not data_dir.exists():
-        st.error(f"Le dossier cache OneDrive est introuvable : {data_dir}")
-        return
+    # --- Charger le fichier parquet depuis GitHub (version brute) ---
+    url_parquet = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/Cache/etat_stock.parquet"
 
     try:
-        df_etat_stock = pd.read_parquet(data_dir / "etat_stock.parquet")
+        df_etat_stock = pd.read_parquet(url_parquet, engine="pyarrow")
     except Exception as e:
-        st.error(f"Erreur lors du chargement du cache : {e}")
+        st.error(f"Impossible de charger le fichier état stock depuis GitHub : {e}")
         return
+
 
     # -------------------- Saisie MGB avec suggestions --------------------
     liste_mgb = df_etat_stock['MGB'].dropna().unique()
