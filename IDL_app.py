@@ -26,6 +26,9 @@ from PyPDF2 import PdfReader, PdfWriter
 import sys
 from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
 import numpy as np
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+import base64
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
@@ -731,64 +734,52 @@ def Analyse_stock():
     # separation :
     st.divider()
 
-
-    file_last = None
+    # --- Lecture de file_last.txt ---
     file_last_txt = RENDER_CACHE_DIR / "file_last.txt"
+    file_last = None
 
-    # 1) Render cache
-    if file_last_txt.exists():
-        with open(file_last_txt, "r", encoding="utf-8") as f:
-            file_last = f.read().strip()
-
-    # 2) Local cache
-    elif (LOCAL_CACHE_DIR / "file_last.txt").exists():
-        with open(LOCAL_CACHE_DIR / "file_last.txt", "r", encoding="utf-8") as f:
-            file_last = f.read().strip()
-
-    # 3) GitHub RAW fallback
-    else:
-        github_url = RAW_BASE + "file_last.txt"
-        try:
-            r = requests.get(github_url)
+    try:
+        if file_last_txt.exists():
+            file_last = file_last_txt.read_text(encoding="utf-8").strip()
+        elif (LOCAL_CACHE_DIR / "file_last.txt").exists():
+            file_last = (LOCAL_CACHE_DIR / "file_last.txt").read_text(encoding="utf-8").strip()
+        else:
+            r = requests.get(RAW_BASE + "file_last.txt")
             r.raise_for_status()
             file_last = r.text.strip()
             st.info("file_last.txt chargé depuis GitHub Data_IDL")
-        except Exception:
-            st.warning("Aucun fichier d'écart stock récent trouvé (file_last non défini).")
-            st.stop()
-
-    # --- CORRECTION CRITIQUE ---
-    # On garde seulement le nom du fichier parquet
-    file_last = Path(file_last).name
-
-
-    # Render
-    if (RENDER_CACHE_DIR / file_last).exists():
-        file_parquet = RENDER_CACHE_DIR / file_last
-
-    # Local
-    elif (LOCAL_CACHE_DIR / file_last).exists():
-        file_parquet = LOCAL_CACHE_DIR / file_last
-
-    # GitHub RAW
-    else:
-        file_parquet = file_last
-
-    # Sécurité
-    if isinstance(file_parquet, Path) and not file_parquet.exists():
-        st.error(f"Fichier parquet introuvable : {file_parquet}")
+    except Exception as e:
+        st.warning(f"Aucun fichier d'écart stock récent trouvé (file_last non défini).\n{e}")
         st.stop()
 
-    # Chargement
-    if isinstance(file_parquet, Path):
-        df = pd.read_parquet(file_parquet)
-    else:
-        df = pd.read_parquet(file_parquet, engine="pyarrow")
+    # --- Détermination du chemin réel du fichier parquet ---
+    parquet_path = None
 
-    # --- Chargement du dernier parquet ---
-    parquet_path = Path(file_last).with_suffix(".parquet")
-    if not parquet_path.exists():
-        st.warning(f"Fichier parquet introuvable : {parquet_path}")
+    # Render cache
+    if (RENDER_CACHE_DIR / file_last).exists():
+        parquet_path = RENDER_CACHE_DIR / file_last
+    # Local cache
+    elif (LOCAL_CACHE_DIR / file_last).exists():
+        parquet_path = LOCAL_CACHE_DIR / file_last
+    # GitHub fallback : télécharger dans Render cache
+    else:
+        try:
+            github_parquet_url = RAW_BASE + file_last
+            r = requests.get(github_parquet_url)
+            r.raise_for_status()
+            parquet_path = RENDER_CACHE_DIR / file_last
+            parquet_path.write_bytes(r.content)
+            st.info(f"{file_last} téléchargé depuis GitHub dans Render cache.")
+        except Exception as e:
+            st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last}\n{e}")
+            st.stop()
+
+    # --- Chargement du parquet ---
+    try:
+        df = pd.read_parquet(parquet_path)
+        st.success(f"Fichier parquet chargé : {parquet_path.name}")
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du parquet : {parquet_path}\n{e}")
         st.stop()
 
     # --- Initialisation de la session Streamlit ---
@@ -1226,26 +1217,6 @@ def Analyse_stock():
         )
 
         st.success("PDF généré et parquet mis à jour avec les commentaires !")
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import os
-from pathlib import Path
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib import colors
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfbase import pdfmetrics
-from PIL import Image, ImageDraw
-import qrcode
-from barcode import EAN13, EAN8
-from barcode.writer import ImageWriter
-from PyPDF2 import PdfReader, PdfWriter
-from reportlab.lib.utils import ImageReader
-import requests
-import base64
 
 def tab_Detrompeurs():
     st.title("Détrompeurs")
