@@ -149,6 +149,8 @@ def load_data():
     # ----------------------------------------
     df_article_euros = read_excel_from_github("Article_euros.xlsx")
 
+    df_etat_stock = read_excel_from_github("etat_stock.xlsm")
+    df_excel_ean = read_excel_from_github("Detrompeur/Liste detrompeur + EAN.xlsx")
     # ----------------------------------------
     # Synthèse
     # ----------------------------------------
@@ -169,13 +171,15 @@ def load_data():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
+        df_etat_stock,
+        df_excel_ean,
         file_last,  # chemin GitHub du dernier fichier
     )
 
 # =========================
 # === PREPROCESSING
 # =========================
-def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock):  
+def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock, df_etat_stock, df_excel_ean,):  
 
         # --- ECART STOCK ---
         df_ecart_stock_prev = df_ecart_stock_prev.drop(columns=['Var','Locations','MMS Stock (1 piece)','WMS Stock (1 piece)',
@@ -490,6 +494,58 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             else:
                 print("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
 
+        #--- ETAT STOCK ---
+        if 'Ref Metro' not in df_etat_stock.columns and 'SubSys' in df_etat_stock.columns:
+            df_etat_stock = df_etat_stock.rename(columns={'SubSys': 'Ref Metro'})
+            df_etat_stock ['MGB'] = df_etat_stock ['MGB'].astype(str)
+
+
+            # Vérifier que les colonnes essentielles existent
+            essential_cols = ['MGB', 'Description', 'Ref Metro']
+            missing_cols = [c for c in essential_cols if c not in df_etat_stock.columns]
+            if missing_cols:
+                raise ValueError(f"Colonnes manquantes dans l'état stock : {missing_cols}")
+
+            df_etat_stock = df_etat_stock[essential_cols].copy()
+
+            # Ne garder qu'une seule ligne par MGB
+            df_etat_stock = df_etat_stock.drop_duplicates(subset='MGB', keep='first')
+
+            # --- Nettoyage des caractères spéciaux dans Description ---
+            remplacement = {"Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
+                            "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã": "à", "¤": "", "«": "", "»": "", "Â": ""}
+            df_etat_stock["Description"] = df_etat_stock["Description"].replace(remplacement, regex=True)
+
+            # --- Ajouter la colonne EAN depuis le fichier Excel ---
+            df_excel_ean['MGB'] = df_excel_ean['MGB'].astype(str)
+
+            # Merge outer pour conserver tous les MGB
+            df_merged = df_etat_stock.merge(
+                df_excel_ean[['MGB', 'Description', 'Ref Metro', 'CODE EAN']],
+                on='MGB',
+                how='outer',
+                suffixes=('_stock', '_ean')
+            )
+
+            # Pour Description et Ref Metro, garder celle de df_etat_stock si présente, sinon prendre df_excel_ean
+            for col in ['Description', 'Ref Metro']:
+                df_merged[col] = df_merged[f'{col}_stock'].combine_first(df_merged[f'{col}_ean'])
+                df_merged.drop([f'{col}_stock', f'{col}_ean'], axis=1, inplace=True)
+
+            # Renommer CODE EAN → EAN
+            df_merged.rename(columns={'CODE EAN': 'EAN'}, inplace=True)
+
+            # Convertir les EAN float en str sans décimales
+            df_merged['EAN'] = df_merged['EAN'].apply(
+                lambda x: str(int(x)) if pd.notna(x) and isinstance(x, (float, np.floating)) else (str(x) if pd.notna(x) else '')
+            )
+
+            # Gérer les doublons : priorité aux lignes avec EAN rempli
+            df_merged.sort_values(by='EAN', key=lambda x: x.notna(), ascending=False, inplace=True)
+            df_merged = df_merged.drop_duplicates(subset='MGB', keep='first')
+
+            # Résultat final
+            df_etat_stock = df_merged
 
 
         # ==================================================
@@ -640,4 +696,4 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_mvt_stock = remove_full_duplicate_rows(df_mvt_stock)
         df_article_euros = remove_full_duplicate_rows(df_article_euros)
         
-        return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock
+        return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock, df_etat_stock, df_excel_ean,

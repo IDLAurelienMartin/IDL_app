@@ -1230,60 +1230,67 @@ def tab_Detrompeurs():
     st.write("Générateur de PDF de détrompeurs à partir d'un MGB.")
 
     # --- Fichiers sources ---
-    fichier_excel_ean = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
-    fichier_etat_stock = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Etat_Stock.xlsm"
     fichier_pdf_vierge = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/detrompeur_vierge.pdf"
     dossier_sortie = r"https://github.com/IDLAurelienMartin/Data_IDL/tree/main/Detrompeur/Detrompeur"
+    file_excel_ean = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
 
-    # --- Lire toutes les feuilles Excel ---
-    all_sheets = pd.read_excel(fichier_excel_ean, sheet_name=None, engine='openpyxl')
-    df_ean = pd.concat(all_sheets.values(), ignore_index=True)
-    df_etat_stock = pd.read_excel(fichier_etat_stock, engine='openpyxl')
+ # -------------------- Charger df_ean de manière sûre --------------------
+    global df_ean
+    try:
+        df_ean = pd.read_excel(file_excel_ean, dtype=str)
+    except Exception:
+        df_ean = pd.DataFrame(columns=["Description", "MGB", "CODE EAN"])
 
-    # --- Préparer le DataFrame final avec uniquement les colonnes utiles ---
-    df_final = df_etat_stock[['MGB', 'Description', 'Ref Metro']].copy()
+    # -------------------- Charger fichier état stock --------------------
+    data_dir = Path(r"C:\Users\aumartin\OneDrive - ID Logistics\Data_app\Cache")
+    if not data_dir.exists():
+        st.error(f"Le dossier cache OneDrive est introuvable : {data_dir}")
+        return
 
-    # Ne garder qu'une seule ligne par MGB
-    df_final = df_final.drop_duplicates(subset='MGB', keep='first')
-    remplacement = {"Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
-                "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã": "à", "¤": "", "«": "", "»": ""}
-    if 'Description' in df_final.columns:
-        for ancien, nouveau in remplacement.items():
-            df_final["Description"] = df_final["Description"].str.replace(ancien, nouveau, regex=False)
+    try:
+        df_etat_stock = pd.read_parquet(data_dir / "etat_stock.parquet")
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du cache : {e}")
+        return
 
-    # Ajouter la colonne EAN depuis df_ean en faisant correspondre le MGB
-    df_final['EAN'] = df_final['MGB'].apply(
-        lambda mgb: str(df_ean.loc[df_ean['MGB'] == mgb, 'CODE EAN'].values[0])
-        if mgb in df_ean['MGB'].values else ""
-    )
-
-    # --- Sélecteur MGB ---
-    liste_mgb = df_final['MGB'].dropna().unique()# Saisie libre
+    # -------------------- Saisie MGB avec suggestions --------------------
+    liste_mgb = df_etat_stock['MGB'].dropna().unique()
     mgb_saisie = st.text_input("Taper le MGB ici et appuyer sur Entrée pour voir les suggestions")
 
-    # Filtrer les suggestions à partir de la saisie
     suggestions = [m for m in liste_mgb if mgb_saisie.upper() in str(m).upper()]
 
-    # Afficher les suggestions si disponibles
     if suggestions:
         mgb_input = st.selectbox("Suggestions de MGB", options=suggestions)
     else:
-        mgb_input = mgb_saisie  # utiliser la saisie telle quelle si aucune suggestion
+        mgb_input = mgb_saisie
 
-    
-    # --- Question modification si PDF existe déjà ---
+    # -------------------- Lecture immédiate de la désignation --------------------
+    if mgb_input:
+        ligne_mgb = df_etat_stock[df_etat_stock["MGB"] == mgb_input]
+
+        if not ligne_mgb.empty:
+            designation_preview = ligne_mgb["Description"].values[0]
+            st.info(f"🔎 Désignation trouvée : **{designation_preview}**")
+
+    # -------------------- choix de la prise --------------------
+    type_prise = st.selectbox(
+        "Type de prise",
+        ["COLIS", "PIECE", "POIDS"],
+        index=0
+    )
+
+
+    # -------------------- Aperçu PDF existant --------------------
     nom_fichier = f"Detrompeur_{mgb_input}.pdf"
     chemin_final = os.path.join(dossier_sortie, nom_fichier)
+
     if os.path.exists(chemin_final):
         st.warning("Un PDF pour ce MGB existe déjà :")
-    
-        # Ouvrir le PDF
+
         pdf = fitz.open(chemin_final)
-        page = pdf[0]  # première page
-        pix = page.get_pixmap()  # convertit en image
-        img_bytes = pix.tobytes("png")  # obtenir en PNG
-        
-        # Afficher l'image dans Streamlit
+        page = pdf[0]
+        pix = page.get_pixmap()
+        img_bytes = pix.tobytes("png")
         st.image(img_bytes, caption="Aperçu du PDF existant", use_container_width=True)
 
         modifier = st.radio("Voulez-vous le modifier ?", ["Non", "Oui"])
@@ -1292,49 +1299,66 @@ def tab_Detrompeurs():
             st.download_button(
                 label="Télécharger le PDF existant",
                 data=open(chemin_final, "rb").read(),
-                file_name=f"{os.path.basename(chemin_final)}",
+                file_name=nom_fichier,
                 mime="application/pdf"
             )
-            st.info("Vous pouvez télécharger le PDF existant ci-dessus.")
+            return  # pas de modification
         else:
-            # --- Upload photos ---
-            photo_ok = st.file_uploader("Charger la photo OK (.jpeg)", type=['jpeg'])
-            photo_ko = st.file_uploader("Charger la photo KO (.jpeg)", type=['jpeg'])
+            photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
+            photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
     else:
-            photo_ok = st.file_uploader("Charger la photo OK (.jpeg)", type=['jpeg'])
-            photo_ko = st.file_uploader("Charger la photo KO (.jpeg)", type=['jpeg'])
+        photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
+        photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
 
-    if st.button("Créer PDF") and mgb_input:
+    # -------------------- Récupération données MGB --------------------
+    ligne = df_etat_stock[df_etat_stock['MGB'] == mgb_input]
 
-        # --- Chercher la ligne correspondant au MGB dans df_final ---
-        ligne = df_final[df_final['MGB'] == mgb_input]
+    if ligne.empty:
+        st.error("MGB non trouvé dans l'état stock.")
+        return
 
-        if ligne.empty:
-            st.error("MGB non trouvé dans l'état stock.")
-            return
-        
-        # Récupération des informations
-        designation = ligne['Description'].values[0]
-        ref_metro = str(ligne['Ref Metro'].values[0]).split('.')[0]
-        ean = ligne['EAN'].values[0]
+    designation = ligne['Description'].values[0]
+    ref_metro = str(ligne['Ref Metro'].values[0]).split('.')[0]
+    ean = ligne['EAN'].values[0]
 
-        if pd.notna(ean):
-            st.info(f"L’EAN existant pour ce MGB : {ean}")
+    # -------------------- EAN --------------------
+    if pd.notna(ean):
+        if isinstance(ean, (float, np.floating, int)):
+            ean = str(int(float(ean)))
         else:
-            st.warning("Pas d’EAN existant pour ce MGB.")
-            ean = st.text_input("Ajouter un EAN manuellement :", "")
-            if ean:
-                # Ajouter la ligne dans df_ean et enregistrer
+            ean = str(ean)
+
+        st.info(f"L’EAN existant pour ce MGB : {ean}")
+    else:
+        st.warning("Pas d’EAN existant pour ce MGB.")
+        ean = st.text_input("Ajouter un EAN manuellement :", value="")
+
+    force_pdf = st.checkbox("Forcer la création du PDF même sans EAN")
+
+    # -------------------- Bouton de création du PDF --------------------
+    if st.button("Créer PDF"):
+        if not ean and not force_pdf:
+            st.error("Veuillez saisir un EAN ou cocher 'Forcer la création du PDF'.")
+            return
+
+        # --- Mise à jour Excel si EAN saisi ---
+        if ean:
+            if mgb_input in df_ean['MGB'].values:
+                df_ean.loc[df_ean['MGB'] == mgb_input, 'CODE EAN'] = ean
+            else:
                 nouvelle_ligne = pd.DataFrame([{
-                    'Description': designation,
-                    'MGB': mgb_input,
-                    'CODE EAN': ean
+                    "Description": designation,
+                    "MGB": mgb_input,
+                    "CODE EAN": ean
                 }])
                 df_ean = pd.concat([df_ean, nouvelle_ligne], ignore_index=True)
-                df_ean.to_excel(fichier_excel_ean, index=False)
-                st.success(f"EAN {ean} ajouté dans {fichier_excel_ean}.")
 
-        
+            df_ean.to_excel(file_excel_ean, index=False)
+            st.success(f"EAN {ean} ajouté/modifié dans le fichier EAN.")
+
+        # -------------------- Génération du PDF --------------------
+        ean_final = ean if ean else ""
+        st.success(f"PDF créé pour le MGB {mgb_input} avec l’EAN {ean_final}.")
 
         # --- Créer PDF temporaire avec texte et images ---
         buffer_txt = BytesIO()
@@ -1342,30 +1366,54 @@ def tab_Detrompeurs():
         c = canvas.Canvas(buffer_txt, pagesize=(page_width, page_height))
 
         # Texte
-        x_start = 50
+        x_start = 20
         y_start = page_height - 160
         max_width = page_width / 2 - 50
+        max_lines = 3
+
+        # Taille initiale de la police
+        font_name = "Helvetica-Bold"
+        font_size = 36
+        min_font_size = 10
+
+        words = designation.split()
+
+        while font_size >= min_font_size:
+            lines = []
+            line = ""
+            for word in words:
+                test_line = f"{line} {word}".strip()
+                if c.stringWidth(test_line, font_name, font_size) <= max_width:
+                    line = test_line
+                else:
+                    lines.append(line)
+                    line = word
+            if line:
+                lines.append(line)
+
+            if len(lines) <= max_lines:
+                break  # OK, le texte tient
+            font_size -= 2  # réduire la taille et réessayer
+
+        # Affichage du texte
         text_obj = c.beginText()
         text_obj.setTextOrigin(x_start, y_start)
-        text_obj.setFont("Helvetica-Bold", 38)
+        text_obj.setFont(font_name, font_size)
         text_obj.setFillColor(colors.darkblue)
-        words = designation.split()
-        line = ""
-        for word in words:
-            test_line = f"{line} {word}".strip()
-            if c.stringWidth(test_line, "Helvetica-Bold", 38) <= max_width:
-                line = test_line
-            else:
-                text_obj.textLine(line)
-                line = word
-        if line:
-            text_obj.textLine(line)
+        for l in lines:
+            text_obj.textLine(l)
         c.drawText(text_obj)
 
         # ref metro
         c.setFont("Helvetica-Bold", 38)
         c.setFillColor(colors.darkblue)    
-        c.drawString(x_start + 180, y_start - 165, f"{ref_metro}")
+        c.drawString(x_start + 220, y_start - 150, f"{ref_metro}")
+
+        # Type de prise (COLIS / PIECE / POIDS)
+        c.setFont("Helvetica-Bold", 38)
+        c.setFillColor(colors.darkblue)
+        c.drawString(x_start + 200, y_start - 210, f"{type_prise}")
+
 
         # --- Fonctions QR, EAN, croix rouge et redimensionnement ---
         def generate_qr(MGB):
@@ -1478,7 +1526,6 @@ def tab_Detrompeurs():
         st.success(f"PDF généré avec succès et enregistré sous : {chemin_final}")
         st.download_button("Télécharger PDF", data=open(chemin_final, "rb").read(),
                            file_name=nom_fichier, mime="application/pdf")
-
 # Configuration des onglets
 tabs = {
     "Accueil": tab_home,

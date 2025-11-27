@@ -61,6 +61,8 @@ def prepare_stock_data():
         df_ecart_stock_prev,
         df_ecart_stock_last,
         df_article_euros,
+        df_etat_stock,
+        df_excel_ean,
         file_last,
     ) = load_data()        # 100% GitHub
 
@@ -73,6 +75,8 @@ def prepare_stock_data():
         df_inventaire,
         df_article_euros,
         df_mvt_stock,
+        df_etat_stock, 
+        df_excel_ean,
     ) = preprocess_data(
         df_ecart_stock_prev,
         df_ecart_stock_last,
@@ -81,6 +85,8 @@ def prepare_stock_data():
         df_inventaire,
         df_article_euros,
         df_mvt_stock,
+        df_etat_stock, 
+        df_excel_ean,
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
@@ -96,6 +102,7 @@ def prepare_stock_data():
         "ecart_stock_last": df_ecart_stock_last,
         "ecart_stock_prev": df_ecart_stock_prev,
         "article_euros": df_article_euros,
+        "etat_stock" : df_etat_stock,
     }
 
     for name, df in datasets.items():
