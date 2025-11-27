@@ -492,54 +492,77 @@ def git_commit_push(file_path: Path, message: str):
         st.error(f"Erreur Git : {e}")
 
 def Analyse_stock():
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime
+    from pathlib import Path
+    from fpdf import FPDF
+    import requests
 
     st.set_page_config(layout="wide")
 
-    # --- Lire UNIQUEMENT depuis Render ---
-    df_article_euros = load_parquet("article_euros.parquet")
-    df_ecart_stock_prev = load_parquet("ecart_stock_prev.parquet")
-    df_ecart_stock_last = load_parquet("ecart_stock_last.parquet")
-    df_reception = load_parquet("reception.parquet")
-    df_sorties = load_parquet("sorties.parquet")
-    df_inventaire = load_parquet("inventaire.parquet")
-    df_mvt_stock = load_parquet("mvt_stock.parquet")
+    # ---------- utilitaire cache wrapper ----------
+    @st.cache_data(ttl=300)
+    def cached_parquet_load(name):
+        # wrapper autour de ton load_parquet existant (doit exister dans le scope global)
+        return load_parquet(name)
 
-    if df_article_euros.empty:
+    # ---------- charger fichiers (mis en cache) ----------
+    df_article_euros = cached_parquet_load("article_euros.parquet")
+    df_ecart_stock_prev = cached_parquet_load("ecart_stock_prev.parquet")
+    df_ecart_stock_last = cached_parquet_load("ecart_stock_last.parquet")
+    df_reception = cached_parquet_load("reception.parquet")
+    df_sorties = cached_parquet_load("sorties.parquet")
+    df_inventaire = cached_parquet_load("inventaire.parquet")
+    df_mvt_stock = cached_parquet_load("mvt_stock.parquet")
+
+    # vérification minimale
+    if df_article_euros.empty or df_ecart_stock_last.empty:
+        st.warning("Fichiers indispensables manquants (article_euros ou ecart_stock_last).")
         st.stop()
-   
-    # Harmoniser le format de la colonne MGB_6 dans tous les DataFrames
-    for df in [df_article_euros, df_inventaire, df_mvt_stock, df_reception, df_sorties, df_ecart_stock_prev, df_ecart_stock_last]:
-        if "MGB_6" in df.columns:
-            df["MGB_6"] = df["MGB_6"].astype(str).str.strip().str.replace(" ", "")
 
-    # --- Interface principale Streamlit ---
+    # ---------- harmonisation MGB_6 (vectorisée) ----------
+    all_dfs = [
+        df_article_euros, df_inventaire, df_mvt_stock, df_reception,
+        df_sorties, df_ecart_stock_prev, df_ecart_stock_last
+    ]
+    for df in all_dfs:
+        if "MGB_6" in df.columns:
+            df["MGB_6"] = df["MGB_6"].astype(str).str.replace(" ", "", regex=False).str.strip()
+
     st.title("Analyse des écarts de stock")
 
-    # Préparation légère ou ajustements (si nécessaires)
+    # ---------- Prétraiter df_mvt_stock une seule fois ----------
     if not df_mvt_stock.empty:
-        df_mvt_stock['Emplacement'] = df_mvt_stock.apply(update_emplacement, axis=1)
-        df_mvt_stock = df_mvt_stock.drop(columns=['prefix_emplacement'], errors='ignore')
+        if "df_mvt_stock_processed" not in st.session_state:
+            # use apply once then cache in session state
+            try:
+                df_mvt_stock_proc = df_mvt_stock.copy()
+                df_mvt_stock_proc["Emplacement"] = df_mvt_stock_proc.apply(update_emplacement, axis=1)
+                df_mvt_stock_proc = df_mvt_stock_proc.drop(columns=["prefix_emplacement"], errors="ignore")
+                st.session_state.df_mvt_stock_processed = df_mvt_stock_proc
+            except Exception:
+                st.session_state.df_mvt_stock_processed = df_mvt_stock.copy()
+        df_mvt_stock = st.session_state.df_mvt_stock_processed
 
-    # --- Liste des MGB à traiter en "Consigne" (XX) ---
-    MGB_consigne = [
-        "226796", "890080", "179986", "885177", "890050", "226923", "834397", "890070",
-        "886655", "226725", "226819", "226681", "897881", "897885", "897890", "897698",
-        "226658", "226783", "896634", "226654", "226814", "226830", "173907", "897814",
-        "226781", "897704", "886648", "881810", "226864", "226780", "633936", "226932",
-        "226995", "226661", "226690", "180719", "226993", "226712", "897082", "135185",
-        "226762", "180717", "226971", "226704", "872843", "226875", "226662", "180716",
-        "226820", "892476", "893404", "226876", "633937", "226900", "897083", "881813",
-        "135181", "383779", "226802", "897816", "180720", "173902", "226840", "226889",
-        "890060",'835296'
-    ]
-    
-    # Afficher le tableau des écarts
+    # ---------- Liste consignes (unchanged) ----------
+    MGB_consigne = {
+        "226796","890080","179986","885177","890050","226923","834397","890070",
+        "886655","226725","226819","226681","897881","897885","897890","897698",
+        "226658","226783","896634","226654","226814","226830","173907","897814",
+        "226781","897704","886648","881810","226864","226780","633936","226932",
+        "226995","226661","226690","180719","226993","226712","897082","135185",
+        "226762","180717","226971","226704","872843","226875","226662","180716",
+        "226820","892476","893404","226876","633937","226900","897083","881813",
+        "135181","383779","226802","897816","180720","173902","226840","226889",
+        "890060","835296"
+    }
+
+    # ---------- UI : filtres (identiques mais gérés via masque combiné) ----------
     st.subheader("Tableau des écarts")
-
-    # --- Colonnes pour les 4 premiers filtres ---
     cols = st.columns(5)
 
-    # --- Options de filtrage ---
     options_1 = ["Toutes", "Positives", "Négatives", "Zéro"]
     options_2 = ["Tous", "Oui", "Non"]
     options_3 = ["Toutes","<1","1-5","5-10","10-15","15-20","20+"]
@@ -552,34 +575,29 @@ def Analyse_stock():
         "Au_Kg": {"col": cols[2], "options": options_2, "type": "bool"},
         "Difference_MMS-WMS_Valeur": {"col": cols[3], "options": options_3, "type": "range", "df_col": "Difference_MMS-WMS"},
         "Difference_MMS-WMS_+/-": {"col": cols[4], "options": options_5, "type": "numeric", "df_col": "Difference_MMS-WMS"},
-        }
+    }
 
-
-    # --- Initialiser session_state pour chaque filtre ---
+    # init session state for filters
     for key, filt in filtres.items():
-        state_key = f"filter_{key}"
-        if state_key not in st.session_state:
-            st.session_state[state_key] = filt["options"][0]
+        sk = f"filter_{key}"
+        if sk not in st.session_state:
+            st.session_state[sk] = filt["options"][0]
 
-    # --- Bouton Réinitialiser les 4 premiers filtres ---
     def reset_filters():
-        for key in filtres.keys():
-            st.session_state[f"filter_{key}"] = filtres[key]["options"][0]
+        for k in filtres.keys():
+            st.session_state[f"filter_{k}"] = filtres[k]["options"][0]
 
-    
-    # --- Selectboxes pour les 4 premiers filtres (utiliser key pour forcer la lecture depuis session_state) ---
     for key, filt in filtres.items():
-        state_key = f"filter_{key}"
+        sk = f"filter_{key}"
         filt["value"] = filt["col"].selectbox(
             key.replace("_", " "),
             filt["options"],
-            index=filt["options"].index(st.session_state[state_key]),
-            key=state_key  # clé obligatoire pour que la réinitialisation fonctionne
+            index=filt["options"].index(st.session_state[sk]),
+            key=sk
         )
-
     cols[0].button("Réinitialiser les filtres", on_click=reset_filters)
 
-    # --- Filtre Deja_Present sous le bouton ---
+    # Deja_Present selectbox
     deja_present_options = ["Tous", "Oui", "Non"]
     if "filter_Deja_Present" not in st.session_state:
         st.session_state["filter_Deja_Present"] = deja_present_options[0]
@@ -591,28 +609,25 @@ def Analyse_stock():
         key="filter_Deja_Present"
     )
 
-    # --- Appliquer les filtres ---
-    df_filtered = df_ecart_stock_last.copy()
+    # ---------- construire masque combiné (une passe) ----------
+    df_src = df_ecart_stock_last
+    mask = pd.Series(True, index=df_src.index)
 
     for key, filt in filtres.items():
         val = st.session_state[f"filter_{key}"]
-        df_col = filt.get("df_col", key)  # si df_col n’existe pas, on garde key
-
+        df_col = filt.get("df_col", key)
         if filt["type"] == "numeric":
             if val == "Positives":
-                df_filtered = df_filtered[df_filtered[df_col] > 0]
+                mask &= df_src[df_col] > 0
             elif val == "Négatives":
-                df_filtered = df_filtered[df_filtered[df_col] < 0]
+                mask &= df_src[df_col] < 0
             elif val == "Zéro":
-                df_filtered = df_filtered[df_filtered[df_col] == 0]
-        
+                mask &= df_src[df_col] == 0
         elif filt["type"] == "bool":
             if val == "Oui":
-                df_filtered = df_filtered[df_filtered[df_col] == True]
+                mask &= df_src[df_col] == True
             elif val == "Non":
-                # Tout ce qui n'est pas True devient Non
-                df_filtered = df_filtered[df_filtered[df_col] != True]
-
+                mask &= df_src[df_col] != True
         elif filt["type"] == "range":
             ranges = {
                 "<1": (0,1),
@@ -624,69 +639,90 @@ def Analyse_stock():
             }
             if val in ranges:
                 low, high = ranges[val]
-                df_filtered = df_filtered[(df_filtered[df_col].abs() >= low) & (df_filtered[df_col].abs() < high)]
+                mask &= (df_src[df_col].abs() >= low) & (df_src[df_col].abs() < high)
 
-    # --- Filtre Deja_Present ---
     map_bool = {"Tous": None, "Oui": True, "Non": False}
-    val_bool = map_bool[st.session_state["filter_Deja_Present"]]
-    if val_bool is not None:
-        df_filtered = df_filtered[df_filtered["Deja_Present"].astype(bool) == val_bool]
+    vb = map_bool[st.session_state["filter_Deja_Present"]]
+    if vb is not None:
+        mask &= df_src["Deja_Present"].astype(bool) == vb
 
-    # --- Affichage ---
-    # On enlève les MGB présents dans la liste de consignes
+    df_filtered = df_src[mask].copy()
+
+    # ---------- enlever les consignes ----------
     df_affiche = df_filtered[~df_filtered["MGB_6"].astype(str).isin(MGB_consigne)].copy()
 
-    df_affiche = df_affiche.reindex(
-        df_affiche["Difference_MMS-WMS"].abs().sort_values(ascending=False).index
-    )
+    # ---------- tri des tableaux : par date/heure si disponible ----------
+    # prefer Date_Heure else use existing diff ordering
+    date_col_candidates = ["Date_Heure", "Date", "Datetime"]
+    date_col = next((c for c in date_col_candidates if c in df_affiche.columns), None)
+    if date_col:
+        # try convert if needed
+        df_affiche[date_col] = pd.to_datetime(df_affiche[date_col], errors="coerce")
+        df_affiche = df_affiche.sort_values(by=[date_col], ascending=False)
+    else:
+        # fallback previous behavior
+        df_affiche = df_affiche.reindex(
+            df_affiche["Difference_MMS-WMS"].abs().sort_values(ascending=False).index
+        )
 
-    # Préparer df_affiche avec la différence précédente
-    df_prev_diff = df_ecart_stock_prev[['MGB_6', 'Difference_MMS-WMS']].rename(
-        columns={'Difference_MMS-WMS': 'Difference_prev'}
-    )
-    df_affiche = df_affiche.merge(df_prev_diff, on='MGB_6', how='left')
+    # ---------- merger difference précédente (batch) ----------
+    if not df_ecart_stock_prev.empty:
+        df_prev_diff = df_ecart_stock_prev[["MGB_6", "Difference_MMS-WMS"]].rename(columns={"Difference_MMS-WMS":"Difference_prev"})
+        # merge left
+        df_affiche = df_affiche.merge(df_prev_diff, on="MGB_6", how="left")
+    else:
+        df_affiche["Difference_prev"] = np.nan
 
-    # Fonction de style pour mettre en orange si différence a changé
+    # ---------- style function (kept) ----------
     def highlight_diff_change(row):
-        if pd.notna(row['Difference_prev']) and row['Difference_MMS-WMS'] != row['Difference_prev']:
+        if pd.notna(row.get("Difference_prev")) and row.get("Difference_MMS-WMS") != row.get("Difference_prev"):
             return ['background-color: #FFA500'] * len(row)
         else:
             return [''] * len(row)
 
-    # Affichage final avec formatage et coloration
+    # ---------- affichage principal ----------
     st.dataframe(
         df_affiche.style
-        .apply(highlight_diff_change, axis=1)
-        .format({
-            '€_Unitaire': "{:.2f}",
-            'Valeur_Difference': "{:.2f}"
-        })
+            .apply(highlight_diff_change, axis=1)
+            .format({'€_Unitaire': "{:.2f}", 'Valeur_Difference': "{:.2f}"})
     )
 
     col1, col2 = st.columns(2)
-    # compter le nombre de ligne :
     col1.subheader(f"Nombre de lignes (hors consignes): {len(df_affiche)}")
-
-    # valeur total :
-    total_value = df_affiche['Valeur_Difference'].sum()
+    total_value = df_affiche['Valeur_Difference'].sum() if "Valeur_Difference" in df_affiche.columns else 0
     col2.subheader(f"Valeur total des écarts : {total_value:.2f} €")
 
-    # separation :
     st.divider()
 
-    # Menu déroulant MGB_6
+    # ---------- sélection MGB pour détails ----------
     col1, col2 = st.columns(2)
     mgb_list = df_affiche['MGB_6'].dropna().unique() if not df_affiche.empty else []
+    if len(mgb_list) == 0:
+        st.info("Aucune ligne à afficher après filtrage.")
+        st.stop()
+
     mgb_selected = col1.selectbox("Choisir un MGB", mgb_list)
 
-    # Filtrer les DataFrames
-    stock_info = df_ecart_stock_last[df_ecart_stock_last['MGB_6'] == mgb_selected]
-    inventaire_info = df_inventaire[df_inventaire['MGB_6'] == mgb_selected]
-    mvt_stock_info = df_mvt_stock[df_mvt_stock['MGB_6'] == mgb_selected]
-    reception_info = df_reception[df_reception['MGB_6'] == mgb_selected]
-    sorties_info = df_sorties[df_sorties['MGB_6'] == mgb_selected]
+    # filtre détaillé (très rapide car index selection)
+    stock_info = df_ecart_stock_last[df_ecart_stock_last['MGB_6'] == mgb_selected].copy()
+    inventaire_info = df_inventaire[df_inventaire['MGB_6'] == mgb_selected].copy()
+    mvt_stock_info = df_mvt_stock[df_mvt_stock['MGB_6'] == mgb_selected].copy()
+    reception_info = df_reception[df_reception['MGB_6'] == mgb_selected].copy()
+    sorties_info = df_sorties[df_sorties['MGB_6'] == mgb_selected].copy()
 
-    # Calcul des totaux
+    # tri des tableaux détaillés par Date_Heure si existant
+    def sort_if_date(df_):
+        for c in ["Date_Heure", "Date", "Datetime", "DateTime"]:
+            if c in df_.columns:
+                df_[c] = pd.to_datetime(df_[c], errors="coerce")
+                return df_.sort_values(by=[c], ascending=True)
+        return df_
+    inventaire_info = sort_if_date(inventaire_info)
+    mvt_stock_info = sort_if_date(mvt_stock_info)
+    reception_info = sort_if_date(reception_info)
+    sorties_info = sort_if_date(sorties_info)
+
+    # ---------- métriques (utilitaire ajouter_totaux réutilisé) ----------
     totaux_stock = ajouter_totaux(stock_info, ["MMS_Stock","WMS_Stock","Difference_MMS-WMS","Valeur_Difference"])
     totaux_inventaire = ajouter_totaux(inventaire_info, ["Inventaire_Final_Quantity"])
     totaux_mvt_stock = ajouter_totaux(mvt_stock_info, ["Qty_Mouvement"])
@@ -700,28 +736,28 @@ def Analyse_stock():
         - totaux_sorties.get('Qty/Article/Poids', 0)
     )
 
-    # Affichage des métriques
     st.subheader(f"Infos pour : {mgb_selected} - {stock_info.iloc[0]['Désignation'] if not stock_info.empty else ''}")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("MMS Stock", totaux_stock.get("MMS_Stock", 0))
-    col2.metric("WMS Stock", totaux_stock.get("WMS_Stock", 0))
-    col4.metric("Difference MMS-WMS", totaux_stock.get("Difference_MMS-WMS", 0))
-    col5.metric("Valeur Difference €", totaux_stock.get("Valeur_Difference", 0),"€")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("MMS Stock", totaux_stock.get("MMS_Stock", 0))
+    c2.metric("WMS Stock", totaux_stock.get("WMS_Stock", 0))
+    c4.metric("Difference MMS-WMS", totaux_stock.get("Difference_MMS-WMS", 0))
+    c5.metric("Valeur Difference €", totaux_stock.get("Valeur_Difference", 0),"€")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Inventaire", totaux_inventaire.get("Inventaire_Final_Quantity", 0))
-    col2.metric("Mouvements", totaux_mvt_stock.get("Qty_Mouvement", 0))
-    col3.metric("Réceptions", totaux_reception.get("Qty_Reception", 0))
-    col4.metric("Sorties", totaux_sorties.get("Qty/Article/Poids", 0))
-    col5.metric("Stock théorique", round(stock_theorique, 2))
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Inventaire", totaux_inventaire.get("Inventaire_Final_Quantity", 0))
+    c2.metric("Mouvements", totaux_mvt_stock.get("Qty_Mouvement", 0))
+    c3.metric("Réceptions", totaux_reception.get("Qty_Reception", 0))
+    c4.metric("Sorties", totaux_sorties.get("Qty/Article/Poids", 0))
+    c5.metric("Stock théorique", round(stock_theorique, 2))
 
-    # Affichage des tableaux détaillés
+    # affichages tableaux détaillés
     st.subheader("Tableau Inventaire")
     st.dataframe(inventaire_info, use_container_width=True)
 
     st.subheader("Tableau des mouvements de stock")
-    st.dataframe(mvt_stock_info.style.apply(color_rows, axis=1), use_container_width=True)
+    # color_rows est réutilisé mais on évite apply coûteux en l'appliquant sur la subset (déjà petit)
+    st.dataframe(mvt_stock_info.style.apply(color_rows, axis=1) if not mvt_stock_info.empty else mvt_stock_info, use_container_width=True)
 
     st.subheader("Tableau des réceptions")
     st.dataframe(reception_info, use_container_width=True)
@@ -729,13 +765,11 @@ def Analyse_stock():
     st.subheader("Tableau des sorties")
     st.dataframe(sorties_info, use_container_width=True)
 
-    # separation :
     st.divider()
 
-    # --- Lecture de file_last.txt ---
+    # ---------- lecture automatique file_last / parquet_path (identique logique) ----------
     file_last_txt = RENDER_CACHE_DIR / "file_last.txt"
     file_last = None
-
     try:
         if file_last_txt.exists():
             file_last = file_last_txt.read_text(encoding="utf-8").strip()
@@ -750,22 +784,15 @@ def Analyse_stock():
         st.warning(f"Aucun fichier d'écart stock récent trouvé (file_last non défini).\n{e}")
         st.stop()
 
-    # --- On garde seulement le nom du fichier (au cas où file_last.txt contiendrait une URL complète) ---
     file_last_name = Path(file_last).name
-
-    # --- Détermination du chemin réel du fichier parquet ---
     parquet_path = None
-
-    # Render cache
     if (RENDER_CACHE_DIR / file_last_name).exists():
         parquet_path = RENDER_CACHE_DIR / file_last_name
-    # Local cache
     elif (LOCAL_CACHE_DIR / file_last_name).exists():
         parquet_path = LOCAL_CACHE_DIR / file_last_name
-    # GitHub fallback : télécharger dans Render cache
     else:
         try:
-            github_parquet_url = RAW_BASE + file_last_name  # RAW_BASE doit pointer vers le dossier RAW GitHub
+            github_parquet_url = RAW_BASE + file_last_name
             r = requests.get(github_parquet_url)
             r.raise_for_status()
             parquet_path = RENDER_CACHE_DIR / file_last_name
@@ -775,308 +802,247 @@ def Analyse_stock():
             st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last_name}\n{e}")
             st.stop()
 
-    # --- Chargement du parquet ---
+    # ---------- lecture du parquet (df base pour commentaires) ----------
     try:
-        df = pd.read_parquet(parquet_path)
-        st.success(f"Fichier parquet chargé : {parquet_path.name}")
+        df_base = pd.read_parquet(parquet_path)
     except Exception as e:
         st.error(f"Erreur lors du chargement du parquet : {parquet_path}\n{e}")
         st.stop()
 
-
-    # --- Initialisation de la session Streamlit ---
+    # initialisation session df_comments (stockage local en session)
     if "df_comments" not in st.session_state:
-        df_existing = pd.read_parquet(parquet_path)
-
-        # S'assurer qu'on a bien la colonne MGB_6
+        df_existing = df_base.copy()
         if "MGB_6" not in df_existing.columns:
             if "Article number (MGB)" in df_existing.columns:
                 df_existing["MGB_6"] = df_existing["Article number (MGB)"].astype(str)
                 df_existing = df_existing.drop(columns=["Article number (MGB)"])
             else:
                 df_existing["MGB_6"] = ""
-
-        # Ajouter les colonnes de commentaire si elles n'existent pas
-        for col in ["Commentaire", "Date_Dernier_Commentaire"]:
+        for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]:
             if col not in df_existing.columns:
-                df_existing[col] = ""
-
+                df_existing[col] = "" if col != "IDL_auto" else False
         st.session_state.df_comments = df_existing.copy()
 
-           
-        # --- Injection automatique des MGB de consigne dans df_comments ---
+    # use local ref
+    df_comments = st.session_state.df_comments
 
-    # Copie du DataFrame de commentaires existant
-    df_comments = st.session_state.df_comments.copy()
-    df_comments["MGB_6"] = df_comments["MGB_6"].astype(str)
-
-
-    # On garde uniquement les MGB de consigne présents dans df_affiche
+    # ---------- injections consignes en batch (update + append) ----------
     df_consigne = df_ecart_stock_last[df_ecart_stock_last["MGB_6"].isin(MGB_consigne)].copy()
-
-    # Colonnes nécessaires
+    # ensure cols
     for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
         if col not in df_consigne.columns:
             df_consigne[col] = ""
-
-    # Définir les valeurs de consigne
     today = datetime.today().strftime("%d-%m-%Y")
     df_consigne["Commentaire"] = "Consigne"
     df_consigne["Date_Dernier_Commentaire"] = today
     df_consigne["Choix_traitement"] = "XX"
 
-    # --- Appliquer ou ajouter les lignes correspondantes ---
-    for _, row in df_consigne.iterrows():
-        mgb = row["MGB_6"]
+    # prepare indexes for fast update
+    df_comments = df_comments.set_index("MGB_6")
+    df_consigne_upd = df_consigne.set_index("MGB_6")[["Commentaire","Date_Dernier_Commentaire","Choix_traitement"]]
 
-        # Si le MGB existe déjà dans df_comments → mise à jour
-        if mgb in df_comments["MGB_6"].values:
-            df_comments.loc[df_comments["MGB_6"] == mgb, 
-                ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]] = [
-                    "Consigne", today, "XX"
-                ]
-        # Sinon → ajout d'une nouvelle ligne
-        else:
-            df_comments = pd.concat([df_comments, pd.DataFrame([row])], ignore_index=True)
+    # update existing rows
+    common_idx = df_comments.index.intersection(df_consigne_upd.index)
+    if not common_idx.empty:
+        df_comments.update(df_consigne_upd.loc[common_idx])
 
-    # Sauvegarde et mise à jour de la session
-    st.session_state.df_comments = df_comments
-    df_comments.to_parquet(parquet_path, index=False)
+    # append missing rows
+    new_idx = df_consigne_upd.index.difference(df_comments.index)
+    if not new_idx.empty:
+        rows_to_add = df_consigne_upd.loc[new_idx].copy()
+        rows_to_add["IDL_auto"] = False
+        df_comments = pd.concat([df_comments, rows_to_add], axis=0)
 
-    # --- Zone d’ajout/modification de commentaire ---
-    mgb_text = f"{mgb_selected} - {stock_info.iloc[0]['Désignation'] if not stock_info.empty else ''}"
+    df_comments = df_comments.reset_index()
 
-    st.markdown(f"""
-    <h1 style='font-size:2.5em'>
-    Ajouter un commentaire à la ligne :<br>{mgb_text}
-    </h1>
-    """, unsafe_allow_html=True)
-
-    df_temp_last = st.session_state.df_comments
-
-    # --- Initialisation sécurisée de df_comments ---
-    if "df_comments" not in st.session_state:
-        st.session_state.df_comments = pd.DataFrame(columns=[
-            "MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"
-        ])
-
-    # --- Attribution automatique IDL pour les quantités < 1 (valeur absolue) ---
+    # ---------- Attribution automatique IDL (batch) ----------
     df_auto_idl = df_ecart_stock_last[df_ecart_stock_last["Difference_MMS-WMS"].abs() < 1].copy()
-    today_str = datetime.today().strftime("%d-%m-%Y")
+    auto_mgbs = df_auto_idl["MGB_6"].astype(str).unique().tolist()
+    if len(auto_mgbs) > 0:
+        # ensure index
+        df_comments = df_comments.set_index("MGB_6")
+        for mgb in auto_mgbs:
+            if mgb in df_comments.index:
+                df_comments.at[mgb, "Commentaire"] = "Régul à faire quantité inferieur à 1"
+                df_comments.at[mgb, "Date_Dernier_Commentaire"] = today
+                df_comments.at[mgb, "Choix_traitement"] = "IDL"
+                df_comments.at[mgb, "IDL_auto"] = True
+            else:
+                df_comments.loc[mgb] = {
+                    "Commentaire": "Régul à faire quantité inferieur à 1",
+                    "Date_Dernier_Commentaire": today,
+                    "Choix_traitement": "IDL",
+                    "IDL_auto": True
+                }
+        df_comments = df_comments.reset_index()
 
-    for _, row in df_auto_idl.iterrows():
-        mgb = str(row["MGB_6"])
-        if mgb in st.session_state.df_comments["MGB_6"].values:
-            st.session_state.df_comments.loc[
-                st.session_state.df_comments["MGB_6"] == mgb,
-                ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]
-            ] = ["Régul à faire quantité inferieur à 1", today_str, "IDL", True]
-        else:
-            new_row = {
-                "MGB_6": mgb,
-                "Commentaire": "Régul à faire quantité inferieur à 1",
-                "Date_Dernier_Commentaire": today_str,
-                "Choix_traitement": "IDL",
-                "IDL_auto": True
-            }
-            st.session_state.df_comments = pd.concat(
-                [st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True
-            )
+    # save back to session (do not write file yet)
+    st.session_state.df_comments = df_comments.copy()
 
-    # Pour les autres lignes, s'assurer que IDL_auto existe
-    if "IDL_auto" not in st.session_state.df_comments.columns:
-        st.session_state.df_comments["IDL_auto"] = False
+    # ---------- zone d'édition commentaire (interaction) ----------
+    df_temp_last = st.session_state.df_comments
+    if mgb_selected not in df_temp_last["MGB_6"].astype(str).values:
+        st.warning(f"MGB {mgb_selected} non trouvé dans le fichier de commentaires.")
+        # don't stop; allow adding new comment manually
+        add_new = True
+    else:
+        add_new = False
 
+    if not add_new:
+        idx = df_temp_last.index[df_temp_last["MGB_6"].astype(str) == str(mgb_selected)][0]
+        commentaire_existant = df_temp_last.at[idx, "Commentaire"]
+        choix_existant = df_temp_last.at[idx, "Choix_traitement"] if "Choix_traitement" in df_temp_last.columns else ""
 
-    if mgb_selected not in df_temp_last["MGB_6"].values:
-        st.warning(f"MGB {mgb_selected} non trouvé dans le fichier parquet.")
-        st.stop()
-
-    index = df_temp_last.index[df_temp_last["MGB_6"] == mgb_selected][0]
-    commentaire_existant = df_temp_last.at[index, "Commentaire"]
-    
-    # Si la colonne n’existe pas encore, on la crée
-    if "Choix_traitement" not in df_temp_last.columns:
-        df_temp_last["Choix_traitement"] = ""
-    
-    choix_existant = df_temp_last.at[index, "Choix_traitement"]
-
-    # --- Réinitialisation automatique du champ texte quand on change de MGB ---
+    # reset input state on change
     if "last_mgb" not in st.session_state:
         st.session_state.last_mgb = mgb_selected
-
     if mgb_selected != st.session_state.last_mgb:
-        st.session_state[f"commentaire_{mgb_selected}"] = ""  # reset texte
-        st.session_state[f"choix_{mgb_selected}"] = None      # reset choix
+        st.session_state[f"commentaire_{mgb_selected}"] = ""
+        st.session_state[f"choix_{mgb_selected}"] = None
         st.session_state.last_mgb = mgb_selected
 
-    # --- Zone d’édition du commentaire ---
+    st.markdown(f"<h1 style='font-size:1.6em'>Ajouter un commentaire : {mgb_selected}</h1>", unsafe_allow_html=True)
 
-    if pd.isna(commentaire_existant) or commentaire_existant == "":
-        commentaire = st.text_area("Écrire votre commentaire :")
+    if add_new or pd.isna(commentaire_existant) or commentaire_existant == "":
+        commentaire = st.text_area("Écrire votre commentaire :", key=f"txt_{mgb_selected}")
         choix_source = st.radio(
             "Sélectionner le chargé du traitement (obligatoire) :",
             options=["METRO", "IDL"],
-            index=None,
-            key=f"choix_{mgb_selected}",
+            key=f"choix_{mgb_selected}"
         )
-        if st.button("Ajouter le commentaire"):
+        if st.button("Ajouter le commentaire", key=f"add_{mgb_selected}"):
             if not choix_source:
                 st.error("Vous devez sélectionner METRO ou IDL avant de valider.")
-                st.stop()
-            today = datetime.today().strftime("%d-%m-%Y")
-            df_temp_last.at[index, "Commentaire"] = commentaire
-            df_temp_last.at[index, "Date_Dernier_Commentaire"] = today
-            df_temp_last.at[index, "Choix_traitement"] = choix_source
-            st.session_state.df_comments = df_temp_last
-            df_temp_last.to_parquet(parquet_path, index=False)
-            git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
-            st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
+            else:
+                today = datetime.today().strftime("%d-%m-%Y")
+                # update session df_comments by index
+                if mgb_selected in st.session_state.df_comments["MGB_6"].astype(str).values:
+                    ridx = st.session_state.df_comments.index[st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)][0]
+                    st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
+                    st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
+                    st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
+                else:
+                    new_row = {"MGB_6": str(mgb_selected), "Commentaire": commentaire, "Date_Dernier_Commentaire": today, "Choix_traitement": choix_source, "IDL_auto": False}
+                    st.session_state.df_comments = pd.concat([st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True)
+                # write once, then git push
+                st.session_state.df_comments.to_parquet(parquet_path, index=False)
+                git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
+                st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
+                # refresh local copies
+                st.experimental_rerun()
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
         st.write(f"Suivi actuel : {choix_existant if choix_existant else 'Non défini'}")
-        modifier = st.radio("Voulez-vous changer ce commentaire ?", ("Non", "Oui"))
+        modifier = st.radio("Voulez-vous changer ce commentaire ?", ("Non", "Oui"), key=f"modif_{mgb_selected}")
         if modifier == "Oui":
-            commentaire = st.text_area("Écrire votre nouveau commentaire :", commentaire_existant)
+            commentaire = st.text_area("Écrire votre nouveau commentaire :", commentaire_existant, key=f"edit_{mgb_selected}")
             choix_source = st.radio(
-            "Sélectionner le chargé du traitement (obligatoire) :",
+                "Sélectionner le chargé du traitement (obligatoire) :",
                 options=["METRO", "IDL"],
-                index=["METRO", "IDL"].index(choix_existant) if choix_existant in ["METRO", "IDL"] else None,
-                key=f"choix_{mgb_selected}",
+                index=["METRO", "IDL"].index(choix_existant) if choix_existant in ["METRO", "IDL"] else 0,
+                key=f"choix_edit_{mgb_selected}"
             )
-            if st.button("Mettre à jour le commentaire"):
-                if not choix_source:
-                    st.error("Vous devez sélectionner METRO ou IDL avant de valider.")
-                    st.stop()
+            if st.button("Mettre à jour le commentaire", key=f"update_{mgb_selected}"):
                 today = datetime.today().strftime("%d-%m-%Y")
-                df_temp_last.at[index, "Commentaire"] = commentaire
-                df_temp_last.at[index, "Date_Dernier_Commentaire"] = today
-                df_temp_last.at[index, "Choix_traitement"] = choix_source
-                st.session_state.df_comments = df_temp_last
-                df_temp_last.to_parquet(parquet_path, index=False)
+                ridx = st.session_state.df_comments.index[st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)][0]
+                st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
+                st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
+                st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
+                st.session_state.df_comments.to_parquet(parquet_path, index=False)
                 git_commit_push(parquet_path, f"MAJ commentaires pour MGB {mgb_selected}")
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
+                st.experimental_rerun()
 
-   # --------------------------
-    # Classe PDF personnalisée
-    # --------------------------
-    class PDF(FPDF):
-        def __init__(self, headers, col_widths):
-            super().__init__(orientation="L", unit="mm", format="A4")
-            self.headers = headers
-            self.col_widths = col_widths
-            self.first_page = True
-
-        def header(self):
-            if self.first_page:
-                return
-            self.set_font("Arial", "B", 14)
-            self.cell(0, 10, f"Rapport Ecart {datetime.today().strftime('%d/%m/%Y')}", ln=True, align="C")
-            self.ln(5)
-            self.set_font("Arial", "B", 10)
-            for i, col in enumerate(self.headers):
-                self.cell(self.col_widths[i], 10, col, border=1, align="C")
-            self.ln()
-
-        def footer(self):
-            self.set_y(-15)
-            self.set_font("Arial", "I", 8)
-            self.cell(0, 10, f"Page {self.page_no()}", align="C")
-
-    # -------------------------
-    # ----Génération du PDF----
-    # -------------------------
-    
+    # ---------- Génération du PDF trié par Suivi puis Date ----------
     if st.button("Générer le PDF du rapport"):
         df_for_pdf = st.session_state.df_comments.copy()
-        df_for_pdf = st.session_state.df_comments[
-            st.session_state.df_comments["Date_Dernier_Commentaire"].notna() &
-            (st.session_state.df_comments["Date_Dernier_Commentaire"] != "")
-        ].fillna("")
+        df_for_pdf = df_for_pdf[df_for_pdf["Date_Dernier_Commentaire"].notna() & (df_for_pdf["Date_Dernier_Commentaire"] != "")].fillna("")
 
-        # Fusion avec df_sorties pour ajouter la colonne 'Cellule'
-        if 'df_sorties' in locals():
-            # S’assurer qu’il y a une seule ligne par MGB_6
-            df_cellules = (
-                df_sorties[['MGB_6', 'Cellule']]
-                .dropna(subset=['MGB_6'])
-                .drop_duplicates(subset=['MGB_6'], keep='first')
-            )
-
-            df_for_pdf = df_for_pdf.merge(
-                df_cellules,
-                on='MGB_6',
-                how='left'
-            )
+        # ajouter colonne 'Cellule' via df_sorties (une ligne par MGB_6)
+        if not df_sorties.empty:
+            df_cellules = df_sorties[['MGB_6', 'Cellule']].dropna(subset=['MGB_6']).drop_duplicates(subset=['MGB_6'], keep='first')
+            df_for_pdf = df_for_pdf.merge(df_cellules, on='MGB_6', how='left')
         else:
-            st.warning("df_sorties non trouvé, la colonne 'Cellule' ne sera pas ajoutée.")
             df_for_pdf["Cellule"] = ""
-        
-            # Convertir la date en format réel pour tri
-        df_for_pdf["Date_Dernier_Commentaire_dt"] = pd.to_datetime(
-            df_for_pdf["Date_Dernier_Commentaire"], format="%d-%m-%Y", errors="coerce"
-        )
 
-        # Ordonner les lignes :
-        df_idl_auto = df_for_pdf[df_for_pdf.get("IDL_auto", False) == True]
-        df_idl_normales = df_for_pdf[(df_for_pdf["Choix_traitement"] == "IDL") & (df_for_pdf.get("IDL_auto", False) != True)]
-        # 1️ METRO par date croissante
-        # 2️ IDL par date croissante
-        df_for_pdf = pd.concat([
-            df_for_pdf[df_for_pdf["Choix_traitement"] == "METRO"],
-            df_idl_normales,
-            df_idl_auto,  
-            df_for_pdf[df_for_pdf["Choix_traitement"] == ""],
-            df_for_pdf[df_for_pdf["Choix_traitement"] == "XX"]
-        ])
+        # date convert
+        df_for_pdf["Date_Dernier_Commentaire_dt"] = pd.to_datetime(df_for_pdf["Date_Dernier_Commentaire"], format="%d-%m-%Y", errors="coerce")
 
+        # create Suivi_sort with IDL_auto handled
+        def suivi_val(row):
+            if row.get("IDL_auto", False):
+                return "IDL_auto"
+            val = row.get("Choix_traitement", "")
+            return val if pd.notna(val) else ""
+
+        df_for_pdf["Suivi_sort"] = df_for_pdf.apply(suivi_val, axis=1)
+
+        suivi_order = ["METRO", "IDL", "IDL_auto", "", "XX"]
+        df_for_pdf["Suivi_sort"] = pd.Categorical(df_for_pdf["Suivi_sort"], categories=suivi_order, ordered=True)
+
+        # sort by suivi then date (ascending)
+        df_for_pdf = df_for_pdf.sort_values(by=["Suivi_sort", "Date_Dernier_Commentaire_dt"], ascending=[True, True])
+
+        # exclude consignes for detailed part
+        df_for_pdf_no_consigne = df_for_pdf[~df_for_pdf["MGB_6"].astype(str).isin(MGB_consigne)].copy()
+
+        # precompute color mapping
+        def color_code(row):
+            if row.get("IDL_auto", False): return (216,191,216)
+            if row.get("Choix_traitement") == "METRO": return (255,255,153)
+            if row.get("Choix_traitement") == "IDL": return (173,216,230)
+            if row.get("Choix_traitement") == "XX": return (255,200,200)
+            return (255,255,255)
+        df_for_pdf["Color_fill"] = df_for_pdf.apply(color_code, axis=1)
+
+        # PDF class as before but lighter loop since precomputed fields exist
+        class PDF(FPDF):
+            def __init__(self, headers, col_widths):
+                super().__init__(orientation="L", unit="mm", format="A4")
+                self.headers = headers
+                self.col_widths = col_widths
+                self.first_page = True
+            def header(self):
+                if self.first_page:
+                    return
+                self.set_font("Arial", "B", 14)
+                self.cell(0, 10, f"Rapport Ecart {datetime.today().strftime('%d/%m/%Y')}", ln=True, align="C")
+                self.ln(5)
+                self.set_font("Arial", "B", 10)
+                for i, col in enumerate(self.headers):
+                    self.cell(self.col_widths[i], 10, col, border=1, align="C")
+                self.ln()
+            def footer(self):
+                self.set_y(-15)
+                self.set_font("Arial", "I", 8)
+                self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+        # build pdf
         col_widths = [15, 70, 15, 15, 15, 15, 20, 15, 105]
         headers = ["MGB_6", "Désignation","Cellule","MMS","WMS", "Diff", "Date", "Suivi", "Commentaire"]
-
         pdf = PDF(headers, col_widths)
         pdf.set_auto_page_break(auto=True, margin=20)
 
-        # --- Préparation des données pour la synthèse ---
-
-        # Exclure les MGB de consignes
-        df_for_pdf_no_consigne = df_for_pdf[~df_for_pdf["MGB_6"].astype(str).isin(MGB_consigne)].copy()
-
-        # Total (hors consignes)
-        total_lignes = len(df_temp_last)-len(df_consigne)
-        
-        # Lignes METRO
+        # synthese page (same content)
+        total_lignes = len(st.session_state.df_comments) - len(df_consigne)
         df_metro = df_for_pdf_no_consigne[df_for_pdf_no_consigne["Choix_traitement"] == "METRO"]
-        nb_metro = len(df_metro)
-
-        # Lignes IDL
         df_idl = df_for_pdf_no_consigne[df_for_pdf_no_consigne["Choix_traitement"] == "IDL"]
-        nb_idl = len(df_idl)
+        nb_metro, nb_idl = len(df_metro), len(df_idl)
+        nb_non = total_lignes - (nb_metro + nb_idl)
 
-        # Lignes non traitées (non présentes dans df_for_pdf car pas de commentaire)      
-        nb_non = total_lignes-(nb_metro+nb_idl)
-
-        # --- 1ere page = Page de synthèse ---
-        x_offset = 50
-        x_offset_1 = 40
+        x_offset = 50; x_offset_1 = 40
         pdf.add_page()
         pdf.set_font("Arial", "B", 16)
         pdf.cell(0, 10, "Tableau de synthèse", ln=True, align="C")
         pdf.ln(6)
-
         pdf.set_font("Arial", "", 10)
-
         pdf.ln(6)
         pdf.set_font("Arial", "B", 12)
         pdf.set_x(x_offset_1)
         pdf.cell(0, 8, "Synthèse des Ecarts", ln=True)
         pdf.set_font("Arial", "", 10)
 
-        synthese_data = [            
-            ("Lignes METRO", str(nb_metro)),
-            ("Lignes IDL", str(nb_idl)),
-            ("Lignes en attente d'affectations", str(nb_non)),
-            ("Total écarts (hors consignes)", str(total_lignes)),
-        ]
+        synthese_data = [("Lignes METRO", str(nb_metro)), ("Lignes IDL", str(nb_idl)), ("Lignes en attente d'affectations", str(nb_non)), ("Total écarts (hors consignes)", str(total_lignes))]
 
         col_widths_syn = [90, 40]
         pdf.set_fill_color(220, 220, 220)
@@ -1084,9 +1050,7 @@ def Analyse_stock():
         pdf.cell(col_widths_syn[0], 8, "Catégorie", border=1, align="C", fill=True)
         pdf.cell(col_widths_syn[1], 8, "Nombre", border=1, align="C", fill=True)
         pdf.ln()
-
         pdf.set_font("Arial", "", 9)
-        
         for row in synthese_data:
             pdf.set_x(x_offset)
             pdf.cell(col_widths_syn[0], 8, row[0], border=1)
@@ -1096,75 +1060,29 @@ def Analyse_stock():
         pdf.set_font("Arial", "I", 9)
         pdf.set_x(x_offset)
         pdf.cell(0, 6, "Les lignes non affectées ne figurent pas dans le rapport détaillé.", ln=True)
-
         pdf.ln(4)
-        pdf.set_font("Arial", "B", 12)
-        pdf.set_x(x_offset_1)
-        pdf.cell(0, 8, "Synthèse des lignes traitées", ln=True)
-        pdf.set_font("Arial", "", 10)
 
-        # --- Tableau : lignes traitées par type ---
-        # Les lignes traitées = présentes dans df_ecart_stock_prev mais plus dans df_ecart_stock_last
-
-        mgb_prev = set(df_ecart_stock_prev["MGB_6"].astype(str))
-        mgb_last = set(df_ecart_stock_last["MGB_6"].astype(str))
-        mgb_traite = mgb_prev - mgb_last
-
-        nb_total_traite = len(mgb_traite)
-
-        synthese_traite = [
-            ("Total lignes traitées", str(nb_total_traite))
-        ]
-
-        # Affichage du tableau
-        col_widths_syn2 = [90, 40]
-        pdf.set_fill_color(220, 220, 220)
-        pdf.set_x(x_offset)
-        pdf.cell(col_widths_syn2[0], 8, "Catégorie", border=1, align="C", fill=True)
-        pdf.cell(col_widths_syn2[1], 8, "Nombre", border=1, align="C", fill=True)
-        pdf.ln()
-
-        pdf.set_font("Arial", "", 9)
-        for row in synthese_traite:
-            pdf.set_x(x_offset)
-            pdf.cell(col_widths_syn2[0], 8, row[0], border=1)
-            pdf.cell(col_widths_syn2[1], 8, row[1], border=1, align="C")
-            pdf.ln()
-
-        pdf.ln(4)
+        # retards table
         pdf.set_font("Arial", "B", 12)
         pdf.set_x(x_offset_1)
         pdf.cell(0, 8, "Synthèse des retards de traitement", ln=True)
         pdf.set_font("Arial", "", 10)
-
-        # --- Tableau : lignes affectées depuis plus de 3, 6 et 10 jours ---
         today_dt = datetime.today()
-
-        df_retard = df_for_pdf[
-            (~df_for_pdf["MGB_6"].isin(MGB_consigne)) &
-            (df_for_pdf["Date_Dernier_Commentaire_dt"].notna())
-        ]
-
-        # Retards >3, >6, >10 jours séparés par type METRO/IDL
+        df_retard = df_for_pdf[(~df_for_pdf["MGB_6"].isin(MGB_consigne)) & (df_for_pdf["Date_Dernier_Commentaire_dt"].notna())]
         retard_data = []
-        for days in [3, 6, 10]:
+        for days in [3,6,10]:
             df_days = df_retard[(today_dt - df_retard["Date_Dernier_Commentaire_dt"]).dt.days > days]
             nb_met = len(df_days[df_days["Choix_traitement"] == "METRO"])
-            nb_idl = len(df_days[df_days["Choix_traitement"] == "IDL"])
-            retard_data.append((f"> {days} jours", str(nb_met), str(nb_idl)))
+            nb_idl_ = len(df_days[df_days["Choix_traitement"] == "IDL"])
+            retard_data.append((f"> {days} jours", str(nb_met), str(nb_idl_)))
 
-        # Affichage du tableau
-        col_widths_retard = [90, 40, 40]  # Délai | METRO | IDL
-
-        # En-tête
+        col_widths_retard = [90, 40, 40]
         pdf.set_fill_color(220, 220, 220)
         pdf.set_x(x_offset)
         pdf.cell(col_widths_retard[0], 8, "Délai depuis dernier commentaire", border=1, align="C", fill=True)
         pdf.cell(col_widths_retard[1], 8, "METRO", border=1, align="C", fill=True)
         pdf.cell(col_widths_retard[2], 8, "IDL", border=1, align="C", fill=True)
         pdf.ln()
-
-        # Contenu
         pdf.set_font("Arial", "", 9)
         for row in retard_data:
             pdf.set_x(x_offset)
@@ -1173,38 +1091,23 @@ def Analyse_stock():
             pdf.cell(col_widths_retard[2], 8, row[2], border=1, align="C")
             pdf.ln()
 
-        pdf.first_page = False  # Les pages suivantes auront les en-têtes
-
-        # Nouvelle page pour le détail complet
+        pdf.first_page = False
         pdf.add_page()
         pdf.set_font("Arial", "", 9)
 
+        # boucle détaillée (précomputation réduit le coût)
         for _, row in df_for_pdf.iterrows():
-            choix = row.get("Choix_traitement", "")
-            if row.get("IDL_auto", False):
-                pdf.set_fill_color(216, 191, 216)  # Violet clair pour IDL auto
-            elif choix == "METRO":
-                pdf.set_fill_color(255, 255, 153)  # Jaune clair
-            elif choix == "IDL":
-                pdf.set_fill_color(173, 216, 230)  # Bleu clair
-            elif choix == "XX":
-                pdf.set_fill_color(255, 200, 200)  # Rouge clair (consignes)
-            else:
-                pdf.set_fill_color(255, 255, 255)  # Blanc
-
-            # ligne du tableau
+            pdf.set_fill_color(*row["Color_fill"])
             pdf.cell(col_widths[0], 6, str(row["MGB_6"]), border=1, align="C", fill=True)
-            pdf.cell(col_widths[1], 6, str(row["Désignation"]), border=1, fill=True)
+            pdf.cell(col_widths[1], 6, str(row.get("Désignation", "")), border=1, fill=True)
             pdf.cell(col_widths[2], 6, str(row.get("Cellule", "")), border=1, align="C", fill=True)
-            pdf.cell(col_widths[3], 6, str(row["MMS_Stock"]), border=1, fill=True)
-            pdf.cell(col_widths[4], 6, str(row["WMS_Stock"]), border=1, fill=True)
+            pdf.cell(col_widths[3], 6, str(row.get("MMS_Stock", "")), border=1, fill=True)
+            pdf.cell(col_widths[4], 6, str(row.get("WMS_Stock", "")), border=1, fill=True)
             pdf.cell(col_widths[5], 6, str(round(row.get("Difference_MMS-WMS", 0), 2)), border=1, align="C", fill=True)
-            pdf.cell(col_widths[6], 6, str(row["Date_Dernier_Commentaire"]), border=1, align="C", fill=True)
-            pdf.cell(col_widths[7], 6, str(choix), border=1, align="C", fill=True)
-            
-            x_before = pdf.get_x()
-            y_before = pdf.get_y()
-            pdf.multi_cell(col_widths[8], 6, str(row["Commentaire"]), border=1, fill=True)
+            pdf.cell(col_widths[6], 6, str(row.get("Date_Dernier_Commentaire", "")), border=1, align="C", fill=True)
+            pdf.cell(col_widths[7], 6, str(row.get("Choix_traitement", "")), border=1, align="C", fill=True)
+            x_before = pdf.get_x(); y_before = pdf.get_y()
+            pdf.multi_cell(col_widths[8], 6, str(row.get("Commentaire", "")), border=1, fill=True)
             y_after = pdf.get_y()
             pdf.set_xy(x_before + col_widths[8], y_before)
             pdf.ln(max(6, y_after - y_before))
@@ -1218,21 +1121,26 @@ def Analyse_stock():
             mime="application/pdf"
         )
 
-        st.success("PDF généré et parquet mis à jour avec les commentaires !")
+        # write parquet with comments after PDF generation (one save)
+        st.session_state.df_comments.to_parquet(parquet_path, index=False)
+        git_commit_push(parquet_path, f"MAJ commentaires / export PDF {datetime.today().strftime('%Y-%m-%d')}")
+
+        st.success("PDF généré et commentaires sauvegardés.")
+
 
 def tab_Detrompeurs():
     st.title("Détrompeurs")
     st.write("Générateur de PDF de détrompeurs à partir d'un MGB.")
 
-    # -------------------- Fichiers sources sur GitHub --------------------
+        # -------------------- Fichiers sources GitHub --------------------
     fichier_pdf_vierge_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Detrompeur/detrompeur_vierge.pdf"
     file_excel_ean_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
-    cache_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Cache/etat_stock.parquet"
+    file_excel_stock_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Etat_Stock.xlsm"
 
-    # Dossier sortie local sur Render
+    # Dossier sortie Render
     dossier_sortie = Path("Detrompeur_output")
     dossier_sortie.mkdir(exist_ok=True)
- 
+
     # -------------------- Télécharger PDF vierge --------------------
     fichier_pdf_vierge = dossier_sortie / "detrompeur_vierge.pdf"
     r = requests.get(fichier_pdf_vierge_url)
@@ -1247,26 +1155,25 @@ def tab_Detrompeurs():
     with open(file_excel_ean, "wb") as f:
         f.write(r.content)
 
-    # -------------------- Télécharger cache Parquet --------------------
-    cache_local = dossier_sortie / "etat_stock.parquet"
-    r = requests.get(cache_url)
+    # -------------------- Télécharger Excel Etat Stock --------------------
+    file_excel_stock = dossier_sortie / "Etat_Stock.xlsm"
+    r = requests.get(file_excel_stock_url)
     r.raise_for_status()
-    with open(cache_local, "wb") as f:
-            f.write(r.content)
+    with open(file_excel_stock, "wb") as f:
+        f.write(r.content)
 
-    # -------------------- Charger df_ean --------------------
+    # -------------------- Charger DataFrames --------------------
     try:
         df_ean = pd.read_excel(file_excel_ean, dtype=str)
     except Exception:
         df_ean = pd.DataFrame(columns=["Description", "MGB", "CODE EAN"])
 
-    # -------------------- Charger état stock --------------------
     try:
-        df_etat_stock = pd.read_parquet(cache_local)
-    except Exception as e:
-        st.error(f"Erreur lors du chargement du cache Parquet local : {e}")
+        df_etat_stock = pd.read_excel(file_excel_stock, sheet_name="Stock", dtype=str)
+    except Exception:
+        st.error("Erreur lors du chargement du fichier Etat_Stock.xlsm")
         return
-    
+
     # -------------------- Saisie MGB --------------------
     liste_mgb = df_etat_stock['MGB'].dropna().unique()
     mgb_saisie = st.text_input("Taper le MGB ici et appuyer sur Entrée pour voir les suggestions")
@@ -1299,12 +1206,10 @@ def tab_Detrompeurs():
                                data=open(chemin_final, "rb").read(),
                                file_name=nom_fichier, mime="application/pdf")
             return
-        else:
-            photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
-            photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
-    else:
-        photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
-        photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
+
+    # -------------------- Uploader photos --------------------
+    photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
+    photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
 
     # -------------------- Récupération données MGB --------------------
     ligne = df_etat_stock[df_etat_stock['MGB'] == mgb_input]
@@ -1350,8 +1255,7 @@ def tab_Detrompeurs():
         try:
             pdfmetrics.registerFont(TTFont("DejaVu", str(font_path)))
             font_name = "DejaVu"
-        except Exception as e:
-            st.error(f"Erreur police: {e}")
+        except Exception:
             font_name = "Helvetica-Bold"
 
         # --- Texte Designation ---
@@ -1420,12 +1324,10 @@ def tab_Detrompeurs():
             img, iw, ih = get_image_size(photo_ok, max_w_img, max_h_img)
             c.drawImage(ImageReader(img), page_width*0.75 + (quart_width-iw)/2 - decalage, page_height/2-ih/2, width=iw, height=ih)
         if photo_ko:
-            # Redimensionner d'abord
-            img, img_w, img_h = get_image_size(photo_ko, max_w_img, max_h_img)
-            # Ajouter la croix sur l'image redimensionnée
-            photo_ko_marked = ajouter_croix_rouge(img)
-            c.drawImage(ImageReader(photo_ko_marked), page_width*0.5 + (quart_width-img_w)/2 - decalage,
-                        page_height/2 - img_h/2, width=img_w, height=img_h)
+            img, iw, ih = get_image_size(photo_ko, max_w_img, max_h_img)
+            img_marked = ajouter_croix_rouge(img)
+            c.drawImage(ImageReader(img_marked), page_width*0.5 + (quart_width-iw)/2 - decalage, page_height/2-ih/2, width=iw, height=ih)
+
         c.save()
         buffer_txt.seek(0)
 

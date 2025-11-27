@@ -12,6 +12,8 @@ import io
 import requests
 import shutil
 from io import BytesIO
+import numpy as np
+
 
 # ============================================================
 # === CONFIG GITHUB
