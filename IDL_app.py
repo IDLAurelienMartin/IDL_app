@@ -25,6 +25,38 @@ import fitz
 from PyPDF2 import PdfReader, PdfWriter
 import sys
 from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
+import numpy as np
+
+# --- Dossier cache local sur Render ---
+# Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
+RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
+LOCAL_CACHE_DIR = Path("Cache")
+GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
+
+# On crée aussi le dossier Cache pour éviter les erreurs
+LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+
+# --- Dossiers ---
+RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
+LOCAL_CACHE_DIR = Path("Cache")  # tentative locale
+LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+
+# --- GitHub RAW pour Data_IDL ---
+GITHUB_OWNER = "IDLAurelienMartin"
+GITHUB_REPO = "Data_IDL"
+GITHUB_BRANCH = "main"
+RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
+
+# --- Chargement police compatible Render ---
+
+FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
+
+def load_font(font_size: int):
+    try:
+        return ImageFont.truetype(str(FONT_PATH), font_size)
+    except Exception as e:
+        st.error(f"Erreur chargement police : {e}")
+        return ImageFont.load_default()
 
 
 def tab_home():
@@ -92,14 +124,6 @@ def tab_QR_Codes():
                 frame_width = (A4[0] - 130) / 2
                 frame_height = 130
                 spacing = 30
-
-        # --- Définir le chemin de la police ---
-        FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
-        try:
-            font = ImageFont.truetype(str(FONT_PATH), font_size)
-        except Exception as e:
-            st.error(f"Erreur police: {e}")
-            font = ImageFont.load_default()
 
         # --- Sélection des QR Codes ---
         st.subheader("Choisir les QR Codes")
@@ -248,11 +272,7 @@ def tab_QR_Codes():
                 qr_img = qr_img.resize((qr_width, qr_height))
                 combined.paste(qr_img, (-20, -20) if nb_qr_format == "Grand Format" else (-10, -10))
 
-                # Utiliser la police embarquée pour Render
-                try:
-                    font = ImageFont.truetype(str(FONT_PATH), font_size)
-                except Exception as e:
-                    font = ImageFont.load_default()
+                font = load_font(font_size)
 
                 bbox = draw.textbbox((0, 0), texte_affiche, font=font)
                 text_width = bbox[2] - bbox[0]
@@ -418,25 +438,7 @@ def tab_QR_Codes():
                     if st.button("Effacer le code barre"):
                             st.experimental_rerun()
 
-# --- Dossier cache local sur Render ---
-# Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
-LOCAL_CACHE_DIR = Path("Cache")
-GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 
-# On crée aussi le dossier Cache pour éviter les erreurs
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
-
-# --- Dossiers ---
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
-LOCAL_CACHE_DIR = Path("Cache")  # tentative locale
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
-
-# --- GitHub RAW pour Data_IDL ---
-GITHUB_OWNER = "IDLAurelienMartin"
-GITHUB_REPO = "Data_IDL"
-GITHUB_BRANCH = "main"
-RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
 
 def load_parquet(file_name):
     """
@@ -1225,82 +1227,105 @@ def Analyse_stock():
 
         st.success("PDF généré et parquet mis à jour avec les commentaires !")
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import os
+from pathlib import Path
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
+from PIL import Image, ImageDraw
+import qrcode
+from barcode import EAN13, EAN8
+from barcode.writer import ImageWriter
+from PyPDF2 import PdfReader, PdfWriter
+from reportlab.lib.utils import ImageReader
+import requests
+import base64
+
 def tab_Detrompeurs():
     st.title("Détrompeurs")
     st.write("Générateur de PDF de détrompeurs à partir d'un MGB.")
 
-    # --- Fichiers sources ---
-    fichier_pdf_vierge = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/detrompeur_vierge.pdf"
-    dossier_sortie = r"https://github.com/IDLAurelienMartin/Data_IDL/tree/main/Detrompeur/Detrompeur"
-    file_excel_ean = r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
+    # -------------------- Fichiers sources sur GitHub --------------------
+    fichier_pdf_vierge_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Detrompeur/detrompeur_vierge.pdf"
+    file_excel_ean_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Detrompeur/Liste%20detrompeur%20%2B%20EAN.xlsx"
+    cache_url = "https://github.com/IDLAurelienMartin/Data_IDL/raw/main/Cache/etat_stock.parquet"
 
- # -------------------- Charger df_ean de manière sûre --------------------
-    global df_ean
+    # Dossier sortie local sur Render
+    dossier_sortie = Path("Detrompeur_output")
+    dossier_sortie.mkdir(exist_ok=True)
+
+    # -------------------- Télécharger PDF vierge --------------------
+    fichier_pdf_vierge = dossier_sortie / "detrompeur_vierge.pdf"
+    if not fichier_pdf_vierge.exists():
+        r = requests.get(fichier_pdf_vierge_url)
+        with open(fichier_pdf_vierge, "wb") as f:
+            f.write(r.content)
+
+    # -------------------- Télécharger Excel EAN --------------------
+    file_excel_ean = dossier_sortie / "Liste_detrompeur_EAN.xlsx"
+    if not file_excel_ean.exists():
+        r = requests.get(file_excel_ean_url)
+        with open(file_excel_ean, "wb") as f:
+            f.write(r.content)
+
+    # -------------------- Télécharger cache --------------------
+    cache_local = dossier_sortie / "etat_stock.parquet"
+    if not cache_local.exists():
+        r = requests.get(cache_url)
+        with open(cache_local, "wb") as f:
+            f.write(r.content)
+
+    # -------------------- Charger df_ean --------------------
     try:
         df_ean = pd.read_excel(file_excel_ean, dtype=str)
     except Exception:
         df_ean = pd.DataFrame(columns=["Description", "MGB", "CODE EAN"])
 
-    # --- Charger le fichier parquet depuis GitHub (version brute) ---
-    url_parquet = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main/Cache/etat_stock.parquet"
-
+    # -------------------- Charger état stock --------------------
     try:
-        df_etat_stock = pd.read_parquet(url_parquet, engine="pyarrow")
+        df_etat_stock = pd.read_parquet(cache_local)
     except Exception as e:
-        st.error(f"Impossible de charger le fichier état stock depuis GitHub : {e}")
+        st.error(f"Erreur lors du chargement du cache : {e}")
         return
 
-
-    # -------------------- Saisie MGB avec suggestions --------------------
+    # -------------------- Saisie MGB --------------------
     liste_mgb = df_etat_stock['MGB'].dropna().unique()
     mgb_saisie = st.text_input("Taper le MGB ici et appuyer sur Entrée pour voir les suggestions")
-
     suggestions = [m for m in liste_mgb if mgb_saisie.upper() in str(m).upper()]
+    mgb_input = st.selectbox("Suggestions de MGB", options=suggestions) if suggestions else mgb_saisie
 
-    if suggestions:
-        mgb_input = st.selectbox("Suggestions de MGB", options=suggestions)
-    else:
-        mgb_input = mgb_saisie
-
-    # -------------------- Lecture immédiate de la désignation --------------------
     if mgb_input:
         ligne_mgb = df_etat_stock[df_etat_stock["MGB"] == mgb_input]
-
         if not ligne_mgb.empty:
             designation_preview = ligne_mgb["Description"].values[0]
             st.info(f"🔎 Désignation trouvée : **{designation_preview}**")
 
-    # -------------------- choix de la prise --------------------
-    type_prise = st.selectbox(
-        "Type de prise",
-        ["COLIS", "PIECE", "POIDS"],
-        index=0
-    )
-
+    # -------------------- Choix type de prise --------------------
+    type_prise = st.selectbox("Type de prise", ["COLIS", "PIECE", "POIDS"], index=0)
 
     # -------------------- Aperçu PDF existant --------------------
     nom_fichier = f"Detrompeur_{mgb_input}.pdf"
-    chemin_final = os.path.join(dossier_sortie, nom_fichier)
+    chemin_final = dossier_sortie / nom_fichier
 
-    if os.path.exists(chemin_final):
+    if chemin_final.exists():
         st.warning("Un PDF pour ce MGB existe déjà :")
-
-        pdf = fitz.open(chemin_final)
-        page = pdf[0]
-        pix = page.get_pixmap()
-        img_bytes = pix.tobytes("png")
-        st.image(img_bytes, caption="Aperçu du PDF existant", use_container_width=True)
+        import fitz
+        pdf = fitz.open(str(chemin_final))
+        pix = pdf[0].get_pixmap()
+        st.image(pix.tobytes("png"), caption="Aperçu du PDF existant", use_container_width=True)
 
         modifier = st.radio("Voulez-vous le modifier ?", ["Non", "Oui"])
-
         if modifier == "Non":
-            st.download_button(
-                label="Télécharger le PDF existant",
-                data=open(chemin_final, "rb").read(),
-                file_name=nom_fichier,
-                mime="application/pdf"
-            )
-            return  # pas de modification
+            st.download_button("Télécharger le PDF existant",
+                               data=open(chemin_final, "rb").read(),
+                               file_name=nom_fichier, mime="application/pdf")
+            return
         else:
             photo_ok = st.file_uploader("✅Charger la photo OK✅ (.jpeg)", type=['jpeg'])
             photo_ko = st.file_uploader("❌Charger la photo KO❌ (.jpeg)", type=['jpeg'])
@@ -1310,22 +1335,15 @@ def tab_Detrompeurs():
 
     # -------------------- Récupération données MGB --------------------
     ligne = df_etat_stock[df_etat_stock['MGB'] == mgb_input]
-
     if ligne.empty:
         st.error("MGB non trouvé dans l'état stock.")
         return
-
     designation = ligne['Description'].values[0]
     ref_metro = str(ligne['Ref Metro'].values[0]).split('.')[0]
     ean = ligne['EAN'].values[0]
 
-    # -------------------- EAN --------------------
     if pd.notna(ean):
-        if isinstance(ean, (float, np.floating, int)):
-            ean = str(int(float(ean)))
-        else:
-            ean = str(ean)
-
+        ean = str(int(float(ean))) if isinstance(ean, (float, int)) else str(ean)
         st.info(f"L’EAN existant pour ce MGB : {ean}")
     else:
         st.warning("Pas d’EAN existant pour ce MGB.")
@@ -1333,7 +1351,7 @@ def tab_Detrompeurs():
 
     force_pdf = st.checkbox("Forcer la création du PDF même sans EAN")
 
-    # -------------------- Bouton de création du PDF --------------------
+    # -------------------- Création PDF --------------------
     if st.button("Créer PDF"):
         if not ean and not force_pdf:
             st.error("Veuillez saisir un EAN ou cocher 'Forcer la création du PDF'.")
@@ -1344,41 +1362,31 @@ def tab_Detrompeurs():
             if mgb_input in df_ean['MGB'].values:
                 df_ean.loc[df_ean['MGB'] == mgb_input, 'CODE EAN'] = ean
             else:
-                nouvelle_ligne = pd.DataFrame([{
-                    "Description": designation,
-                    "MGB": mgb_input,
-                    "CODE EAN": ean
-                }])
-                df_ean = pd.concat([df_ean, nouvelle_ligne], ignore_index=True)
-
+                df_ean = pd.concat([df_ean, pd.DataFrame([{"Description": designation, "MGB": mgb_input, "CODE EAN": ean}])], ignore_index=True)
             df_ean.to_excel(file_excel_ean, index=False)
             st.success(f"EAN {ean} ajouté/modifié dans le fichier EAN.")
 
-        # -------------------- Génération du PDF --------------------
-        ean_final = ean if ean else ""
-        st.success(f"PDF créé pour le MGB {mgb_input} avec l’EAN {ean_final}.")
-
-        # --- Créer PDF temporaire avec texte et images ---
+        # --- Génération PDF ---
         buffer_txt = BytesIO()
         page_width, page_height = landscape(A4)
         c = canvas.Canvas(buffer_txt, pagesize=(page_width, page_height))
 
-        # Texte
-        x_start = 20
-        y_start = page_height - 160
-        max_width = page_width / 2 - 50
-        max_lines = 3
-
-        # Taille initiale de la police
-        font_name = "Helvetica-Bold"
+        # --- Police intégrée ---
+        font_path = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
         font_size = 36
-        min_font_size = 10
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVu", str(font_path)))
+            font_name = "DejaVu"
+        except Exception as e:
+            st.error(f"Erreur police: {e}")
+            font_name = "Helvetica-Bold"
 
+        # --- Texte Designation ---
+        x_start, y_start = 20, page_height - 160
+        max_width, max_lines = page_width/2 - 50, 3
         words = designation.split()
-
-        while font_size >= min_font_size:
-            lines = []
-            line = ""
+        while font_size >= 10:
+            lines, line = [], ""
             for word in words:
                 test_line = f"{line} {word}".strip()
                 if c.stringWidth(test_line, font_name, font_size) <= max_width:
@@ -1386,127 +1394,69 @@ def tab_Detrompeurs():
                 else:
                     lines.append(line)
                     line = word
-            if line:
-                lines.append(line)
+            if line: lines.append(line)
+            if len(lines) <= max_lines: break
+            font_size -= 2
 
-            if len(lines) <= max_lines:
-                break  # OK, le texte tient
-            font_size -= 2  # réduire la taille et réessayer
-
-        # Affichage du texte
         text_obj = c.beginText()
         text_obj.setTextOrigin(x_start, y_start)
         text_obj.setFont(font_name, font_size)
         text_obj.setFillColor(colors.darkblue)
-        for l in lines:
-            text_obj.textLine(l)
+        for l in lines: text_obj.textLine(l)
         c.drawText(text_obj)
 
-        # ref metro
-        c.setFont("Helvetica-Bold", 38)
-        c.setFillColor(colors.darkblue)    
+        # --- Ref Metro et Type Prise ---
+        c.setFont(font_name, 38)
         c.drawString(x_start + 220, y_start - 150, f"{ref_metro}")
-
-        # Type de prise (COLIS / PIECE / POIDS)
-        c.setFont("Helvetica-Bold", 38)
-        c.setFillColor(colors.darkblue)
         c.drawString(x_start + 200, y_start - 210, f"{type_prise}")
 
+        # --- QR code ---
+        qr_img = qrcode.make(mgb_input).convert("RGB")
+        qr_img = qr_img.resize((100,100))
+        c.drawImage(ImageReader(qr_img), page_width-110, page_height-110, width=100, height=100)
 
-        # --- Fonctions QR, EAN, croix rouge et redimensionnement ---
-        def generate_qr(MGB):
-            qr_img = qrcode.make(MGB).convert("RGB")
-            qr_size = 100
-            qr_img = qr_img.resize((qr_size, qr_size))
-            return qr_img, qr_size, qr_size
+        # --- EAN ---
+        if ean:
+            ean_img = EAN13(ean, writer=ImageWriter()) if len(ean)==13 else EAN8(ean, writer=ImageWriter())
+            buf_ean = BytesIO()
+            ean_img.write(buf_ean)
+            buf_ean.seek(0)
+            img = Image.open(buf_ean).resize((300,150))
+            c.drawImage(ImageReader(img), 50, 50, width=300, height=150)
 
-        def generate_ean(ean_code: str):
-            if not ean_code:
-                return None, 0, 0
-            if len(ean_code) == 13:
-                ean = EAN13(ean_code, writer=ImageWriter())
-            elif len(ean_code) == 8:
-                ean = EAN8(ean_code, writer=ImageWriter())
-            else:
-                st.error("Le code EAN doit faire 8 ou 13 chiffres.")
-                st.stop()
-            buffer = BytesIO()
-            ean.write(buffer)
-            buffer.seek(0)
-            ean_img = Image.open(buffer)
-            ean_width, ean_height = 300, 150
-            ean_img = ean_img.resize((ean_width, ean_height))
-            return ean_img, ean_width, ean_height
-
-        def ajouter_croix_rouge(image_stream):
-            img = Image.open(image_stream).convert("RGBA")
+        # --- Photos OK / KO ---
+        def ajouter_croix_rouge(file):
+            img = Image.open(file).convert("RGBA")
             draw = ImageDraw.Draw(img)
             w, h = img.size
-            thickness = max(5, w // 100)
-            draw.line((0, 0, w, h), fill=(255, 0, 0, 255), width=thickness)
-            draw.line((0, h, w, 0), fill=(255, 0, 0, 255), width=thickness)
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            buffer.seek(0)
-            return buffer
+            thick = max(5, w//100)
+            draw.line((0,0,w,h), fill=(255,0,0,255), width=thick)
+            draw.line((0,h,w,0), fill=(255,0,0,255), width=thick)
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            return buf
 
-        def get_image_size(file, max_width, max_height):
-            if isinstance(file, Image.Image):
-                img = file
-            else:
-                img = Image.open(file)
-            if img.width > img.height:
-                img = img.rotate(90, expand=True)
-            target_ratio = 2 / 3
-            w, h = img.size
-            current_ratio = w / h
-            if current_ratio > target_ratio:
-                new_w = int(h * target_ratio)
-                left = (w - new_w) // 2
-                img = img.crop((left, 0, left + new_w, h))
-            elif current_ratio < target_ratio:
-                new_h = int(w / target_ratio)
-                top = (h - new_h) // 2
-                img = img.crop((0, top, w, top + new_h))
-            ratio = min(max_width / img.width, max_height / img.height)
-            return img, img.width * ratio, img.height * ratio
+        def get_image_size(file, max_w, max_h):
+            img = Image.open(file) if not isinstance(file, Image.Image) else file
+            ratio = min(max_w/img.width, max_h/img.height)
+            return img, img.width*ratio, img.height*ratio
 
-        quart_width = page_width * 0.25
-        max_width_img = quart_width - 20
-        max_height_img = page_height - 100
-        decalage = 15
-
-        # QR code
-        qr_img, qr_w, qr_h = generate_qr(mgb_input)
-        x_qr = page_width - qr_w - 10
-        y_qr = page_height - qr_h - 10
-        c.drawImage(ImageReader(qr_img), x_qr, y_qr, width=qr_w, height=qr_h)
-
-        # EAN
-        ean_img, ean_w, ean_h = generate_ean(ean)
-        if ean_img:
-            x_ean = 50
-            y_ean = 50
-            c.drawImage(ImageReader(ean_img), x_ean, y_ean, width=ean_w, height=ean_h)
-
-        # Photos OK/KO
+        quart_width, max_w_img, max_h_img, decalage = page_width*0.25, page_width*0.25-20, page_height-100, 15
         if photo_ok:
-            img, img_w, img_h = get_image_size(photo_ok, max_width_img, max_height_img)
-            x_ok = page_width * 0.75 + (quart_width - img_w) / 2 - decalage
-            y_ok = page_height / 2 - img_h / 2
-            c.drawImage(ImageReader(img), x_ok, y_ok, width=img_w, height=img_h)
-
+            img, iw, ih = get_image_size(photo_ok, max_w_img, max_h_img)
+            c.drawImage(ImageReader(img), page_width*0.75 + (quart_width-iw)/2 - decalage, page_height/2-ih/2, width=iw, height=ih)
         if photo_ko:
-            photo_ko_marked = ajouter_croix_rouge(photo_ko)
-            img, img_w, img_h = get_image_size(photo_ko_marked, max_width_img, max_height_img)
-            x_ko = page_width * 0.5 + (quart_width - img_w) / 2 - decalage
-            y_ko = page_height / 2 - img_h / 2
-            c.drawImage(ImageReader(img), x_ko, y_ko, width=img_w, height=img_h)
-
+            # Redimensionner d'abord
+            img, img_w, img_h = get_image_size(photo_ko, max_w_img, max_h_img)
+            # Ajouter la croix sur l'image redimensionnée
+            photo_ko_marked = ajouter_croix_rouge(img)
+            c.drawImage(ImageReader(photo_ko_marked), page_width*0.5 + (quart_width-img_w)/2 - decalage,
+                        page_height/2 - img_h/2, width=img_w, height=img_h)
         c.save()
         buffer_txt.seek(0)
 
-        # --- Fusionner avec PDF vierge ---
+        # --- Fusion PDF vierge ---
         reader_vierge = PdfReader(fichier_pdf_vierge)
         writer = PdfWriter()
         page_vierge = reader_vierge.pages[0]
@@ -1515,15 +1465,34 @@ def tab_Detrompeurs():
         page_vierge.merge_page(page_txt)
         writer.add_page(page_vierge)
 
-        # --- Enregistrer PDF final ---
-        nom_fichier = f"Detrompeur_{mgb_input}.pdf"
-        chemin_final = f"{dossier_sortie}\\{nom_fichier}"
+        # --- Enregistrer PDF localement ---
         with open(chemin_final, "wb") as f_out:
             writer.write(f_out)
-
-        st.success(f"PDF généré avec succès et enregistré sous : {chemin_final}")
-        st.download_button("Télécharger PDF", data=open(chemin_final, "rb").read(),
+        st.success(f"PDF généré localement : {chemin_final}")
+        st.download_button("Télécharger PDF", data=open(chemin_final,"rb").read(),
                            file_name=nom_fichier, mime="application/pdf")
+
+        # --- Push GitHub ---
+        def push_to_github(file_path, repo_path, commit_message="Ajout detrompeur"):
+            with open(file_path,"rb") as f:
+                content_b64 = base64.b64encode(f.read()).decode()
+            repo_owner = "IDLAurelienMartin"
+            repo_name = "Data_IDL"
+            url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{repo_path}"
+            headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}"}
+            r = requests.get(url, headers=headers)
+            sha = r.json().get("sha") if r.status_code==200 else None
+            data = {"message": commit_message, "content": content_b64}
+            if sha: data["sha"]=sha
+            r = requests.put(url, json=data, headers=headers)
+            if r.status_code in [200,201]:
+                st.success(f"PDF envoyé dans GitHub : {repo_path}")
+            else:
+                st.error(f"Erreur GitHub : {r.status_code} {r.text}")
+
+        repo_path = f"Detrompeur/Detrompeur/{nom_fichier}"
+        push_to_github(str(chemin_final), repo_path)
+
 # Configuration des onglets
 tabs = {
     "Accueil": tab_home,
