@@ -32,25 +32,24 @@ import base64
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
-LOCAL_CACHE_DIR = Path("Cache")
 GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
-PARQUET_PATH = GIT_REPO_DIR / "Cache" / "ecart_stock_last.parquet"
-
-# On crée aussi le dossier Cache pour éviter les erreurs
+LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
-RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Dossiers ---
 RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
-LOCAL_CACHE_DIR = Path("Cache")  # tentative locale
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- GitHub RAW pour Data_IDL ---
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
+GIT_REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
 RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
+
+# --- Dossiers ---
+PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
 # --- Chargement police compatible Render ---
 
@@ -479,33 +478,50 @@ def save_parquet_local(df, file_name):
     df.to_parquet(local_path, index=False)
     st.success(f"{file_name} sauvegardé dans Cache/")
 
-def commit_and_push_github(local_repo: Path, branch: str):
+def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "GITHUB_TOKEN"):
+    """
+    Commit et push des changements depuis le repo local vers GitHub.
+    local_repo: dossier racine du repo
+    branch: branche GitHub
+    token_env_var: nom de la variable d'environnement contenant le token
+    """
+    token = os.environ.get(token_env_var)
+    if not token:
+        print("⚠️ GitHub token non trouvé dans les variables d'environnement.")
+        return
+
+    # Configurer le remote temporaire avec token
+    remote_url = subprocess.run(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=local_repo,
+        capture_output=True,
+        text=True
+    ).stdout.strip()
+
+    if remote_url.startswith("https://"):
+        auth_remote = remote_url.replace("https://", f"https://{token}@")
+    else:
+        print("⚠️ URL du remote non HTTPS, push impossible via token.")
+        return
+
     # Ajouter tous les fichiers modifiés
     subprocess.run(["git", "add", "."], cwd=local_repo, check=False)
 
     # Vérifier s'il y a quelque chose à committer
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        cwd=local_repo
-    )
-
+    result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=local_repo)
     if result.returncode == 0:
-        # Pas de changement à committer
         print("Aucun changement à committer.")
-    else:
-        # Commit avec horodatage
-        commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        try:
-            subprocess.run(
-                ["git", "commit", "-m", commit_message],
-                cwd=local_repo,
-                check=True
-            )
-            # Push vers GitHub
-            subprocess.run(["git", "push", "origin", branch], cwd=local_repo, check=False)
-            print("Push GitHub terminé avec les parquets.")
-        except subprocess.CalledProcessError as e:
-            print(f"Erreur lors du commit ou push : {e}")
+        return
+
+    # Commit
+    commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    try:
+        subprocess.run(["git", "commit", "-m", commit_message], cwd=local_repo, check=True)
+        # Push
+        subprocess.run(["git", "push", auth_remote, branch], cwd=local_repo, check=True)
+        print("✅ Push GitHub terminé avec succès.")
+    except subprocess.CalledProcessError as e:
+        print(f"Erreur lors du commit ou push : {e}")
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes
@@ -828,81 +844,86 @@ def Analyse_stock():
         st.error(f"Erreur lors du chargement du parquet : {parquet_path}\n{e}")
         st.stop()
 
-    # initialisation session df_comments (stockage local en session)
+    # ---------- initialisation session df_comments ----------
     if "df_comments" not in st.session_state:
-        df_existing = df_base.copy()
-        if "MGB_6" not in df_existing.columns:
-            if "Article number (MGB)" in df_existing.columns:
-                df_existing["MGB_6"] = df_existing["Article number (MGB)"].astype(str)
-                df_existing = df_existing.drop(columns=["Article number (MGB)"])
-            else:
-                df_existing["MGB_6"] = ""
-        for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]:
-            if col not in df_existing.columns:
-                df_existing[col] = "" if col != "IDL_auto" else False
+        if PARQUET_FILE.exists():
+            df_existing = pd.read_parquet(PARQUET_FILE)
+        else:
+            df_existing = pd.DataFrame(
+                columns=["MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]
+            )
         st.session_state.df_comments = df_existing.copy()
 
-    # use local ref
     df_comments = st.session_state.df_comments
 
-    # ---------- injections consignes en batch (update + append) ----------
+    # ---------- Sélection MGB ----------
+    mgb_list = df_comments["MGB_6"].astype(str).unique().tolist() if not df_comments.empty else []
+    if len(mgb_list) == 0:
+        st.info("Aucune ligne à afficher.")
+        st.stop()
+
+    mgb_selected = st.selectbox("Choisir un MGB", mgb_list)
+
+
+    # =====================================================================
+    #                INJECTIONS CONSIGNES (BATCH)
+    # =====================================================================
     df_consigne = df_ecart_stock_last[df_ecart_stock_last["MGB_6"].isin(MGB_consigne)].copy()
-    # ensure cols
+
     for col in ["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]:
         if col not in df_consigne.columns:
             df_consigne[col] = ""
+
     today = datetime.today().strftime("%d-%m-%Y")
     df_consigne["Commentaire"] = "Consigne"
     df_consigne["Date_Dernier_Commentaire"] = today
     df_consigne["Choix_traitement"] = "XX"
 
-    # prepare indexes for fast update
     df_comments = df_comments.set_index("MGB_6")
-    df_consigne_upd = df_consigne.set_index("MGB_6")[["Commentaire","Date_Dernier_Commentaire","Choix_traitement"]]
+    df_consigne_upd = df_consigne.set_index("MGB_6")[["Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"]]
 
-    # update existing rows
     common_idx = df_comments.index.intersection(df_consigne_upd.index)
-    if not common_idx.empty:
+    if len(common_idx) > 0:
         df_comments.update(df_consigne_upd.loc[common_idx])
 
-    # append missing rows
     new_idx = df_consigne_upd.index.difference(df_comments.index)
-    if not new_idx.empty:
+    if len(new_idx) > 0:
         rows_to_add = df_consigne_upd.loc[new_idx].copy()
         rows_to_add["IDL_auto"] = False
         df_comments = pd.concat([df_comments, rows_to_add], axis=0)
 
     df_comments = df_comments.reset_index()
 
-    # ---------- Attribution automatique IDL (batch) ----------
+
+    # =====================================================================
+    #              ATTRIBUTION AUTOMATIQUE IDL (BATCH)
+    # =====================================================================
     df_auto_idl = df_ecart_stock_last[df_ecart_stock_last["Difference_MMS-WMS"].abs() < 1].copy()
     auto_mgbs = df_auto_idl["MGB_6"].astype(str).unique().tolist()
+
     if len(auto_mgbs) > 0:
-        # ensure index
         df_comments = df_comments.set_index("MGB_6")
+
         for mgb in auto_mgbs:
-            if mgb in df_comments.index:
-                df_comments.at[mgb, "Commentaire"] = "Régul à faire quantité inferieur à 1"
-                df_comments.at[mgb, "Date_Dernier_Commentaire"] = today
-                df_comments.at[mgb, "Choix_traitement"] = "IDL"
-                df_comments.at[mgb, "IDL_auto"] = True
-            else:
-                df_comments.loc[mgb] = {
-                    "Commentaire": "Régul à faire quantité inferieur à 1",
-                    "Date_Dernier_Commentaire": today,
-                    "Choix_traitement": "IDL",
-                    "IDL_auto": True
-                }
+            df_comments.loc[mgb] = {
+                "Commentaire": "Régul à faire quantité inferieur à 1",
+                "Date_Dernier_Commentaire": today,
+                "Choix_traitement": "IDL",
+                "IDL_auto": True
+            }
+
         df_comments = df_comments.reset_index()
 
-    # save back to session (do not write file yet)
     st.session_state.df_comments = df_comments.copy()
 
-    # ---------- zone d'édition commentaire (interaction) ----------
+
+    # =====================================================================
+    #                   ZONE D'ÉDITION COMMENTAIRE
+    # =====================================================================
     df_temp_last = st.session_state.df_comments
+
     if mgb_selected not in df_temp_last["MGB_6"].astype(str).values:
         st.warning(f"MGB {mgb_selected} non trouvé dans le fichier de commentaires.")
-        # don't stop; allow adding new comment manually
         add_new = True
     else:
         add_new = False
@@ -912,63 +933,87 @@ def Analyse_stock():
         commentaire_existant = df_temp_last.at[idx, "Commentaire"]
         choix_existant = df_temp_last.at[idx, "Choix_traitement"] if "Choix_traitement" in df_temp_last.columns else ""
 
-    # reset input state on change
+
+    # reset des inputs lors du changement de MGB
     if "last_mgb" not in st.session_state:
         st.session_state.last_mgb = mgb_selected
+
     if mgb_selected != st.session_state.last_mgb:
         st.session_state[f"commentaire_{mgb_selected}"] = ""
         st.session_state[f"choix_{mgb_selected}"] = None
         st.session_state.last_mgb = mgb_selected
 
+
     st.markdown(f"<h1 style='font-size:1.6em'>Ajouter un commentaire : {mgb_selected}</h1>", unsafe_allow_html=True)
 
+
+    # =====================================================================
+    #                 AJOUT NOUVEAU COMMENTAIRE
+    # =====================================================================
     if add_new or pd.isna(commentaire_existant) or commentaire_existant == "":
         commentaire = st.text_area("Écrire votre commentaire :", key=f"txt_{mgb_selected}")
-        choix_source = st.radio(
-            "Sélectionner le chargé du traitement (obligatoire) :",
-            options=["METRO", "IDL"],
-            key=f"choix_{mgb_selected}"
-        )
+        choix_source = st.radio("Sélectionner METRO ou IDL :", options=["METRO", "IDL"], key=f"choix_{mgb_selected}")
+
         if st.button("Ajouter le commentaire", key=f"add_{mgb_selected}"):
-            if not choix_source:
-                st.error("Vous devez sélectionner METRO ou IDL avant de valider.")
+            today = datetime.today().strftime("%d-%m-%Y")
+
+            if mgb_selected in st.session_state.df_comments["MGB_6"].astype(str).values:
+                ridx = st.session_state.df_comments.index[
+                    st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)
+                ][0]
+                st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
+                st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
+                st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
             else:
-                today = datetime.today().strftime("%d-%m-%Y")
-                # update session df_comments by index
-                if mgb_selected in st.session_state.df_comments["MGB_6"].astype(str).values:
-                    ridx = st.session_state.df_comments.index[st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)][0]
-                    st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
-                    st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
-                    st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
-                else:
-                    new_row = {"MGB_6": str(mgb_selected), "Commentaire": commentaire, "Date_Dernier_Commentaire": today, "Choix_traitement": choix_source, "IDL_auto": False}
-                    st.session_state.df_comments = pd.concat([st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True)
-                # write once, then git push
-                st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
-                commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
-                st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
-                
+                st.session_state.df_comments = pd.concat([
+                    st.session_state.df_comments,
+                    pd.DataFrame([{
+                        "MGB_6": str(mgb_selected),
+                        "Commentaire": commentaire,
+                        "Date_Dernier_Commentaire": today,
+                        "Choix_traitement": choix_source,
+                        "IDL_auto": False
+                    }])
+                ], ignore_index=True)
+
+            # --- sauvegarde + push GitHub ---
+            st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
+            commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
+
+
+    # =====================================================================
+    #                 MODIFICATION COMMENTAIRE EXISTANT
+    # =====================================================================
     else:
         st.write(f"Commentaire actuel : {commentaire_existant}")
         st.write(f"Suivi actuel : {choix_existant if choix_existant else 'Non défini'}")
-        modifier = st.radio("Voulez-vous changer ce commentaire ?", ("Non", "Oui"), key=f"modif_{mgb_selected}")
+
+        modifier = st.radio("Modifier ce commentaire ?", ("Non", "Oui"), key=f"modif_{mgb_selected}")
+
         if modifier == "Oui":
-            commentaire = st.text_area("Écrire votre nouveau commentaire :", commentaire_existant, key=f"edit_{mgb_selected}")
+            commentaire = st.text_area("Nouveau commentaire :", commentaire_existant, key=f"edit_{mgb_selected}")
             choix_source = st.radio(
-                "Sélectionner le chargé du traitement (obligatoire) :",
+                "Sélectionner METRO ou IDL :",
                 options=["METRO", "IDL"],
                 index=["METRO", "IDL"].index(choix_existant) if choix_existant in ["METRO", "IDL"] else 0,
                 key=f"choix_edit_{mgb_selected}"
             )
-            if st.button("Mettre à jour le commentaire", key=f"update_{mgb_selected}"):
+
+            if st.button("Mettre à jour", key=f"update_{mgb_selected}"):
                 today = datetime.today().strftime("%d-%m-%Y")
-                ridx = st.session_state.df_comments.index[st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)][0]
+                ridx = st.session_state.df_comments.index[
+                    st.session_state.df_comments["MGB_6"].astype(str) == str(mgb_selected)
+                ][0]
                 st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
                 st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
-                st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
+
+                st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
                 commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
+
                 
     # ---------- Génération du PDF trié par Suivi puis Date ----------
     if st.button("Générer le PDF du rapport"):
@@ -1131,6 +1176,7 @@ def Analyse_stock():
 
         pdf_bytes = pdf.output(dest="S").encode("latin-1")
 
+        # --- Téléchargement du PDF ---
         st.download_button(
             label="Télécharger le PDF",
             data=pdf_bytes,
@@ -1138,10 +1184,20 @@ def Analyse_stock():
             mime="application/pdf"
         )
 
-        # write parquet with comments after PDF generation (one save)
-        st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
-        commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
-        st.success("PDF généré et commentaires sauvegardés.")
+        # --- Sauvegarde du fichier parquet dans Cache ---
+        try:
+            st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
+            st.info("Fichier parquet mis à jour dans Cache/")
+        except Exception as e:
+            st.error(f"Erreur lors de la sauvegarde du parquet : {e}")
+
+        # --- Commit + Push GitHub ---
+        try:
+            commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            st.success("PDF généré, commentaires sauvegardés et envoyés sur GitHub.")
+        except Exception as e:
+            st.error(f"Erreur lors du push GitHub : {e}")
+
 
 
 def tab_Detrompeurs():
