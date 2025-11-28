@@ -130,13 +130,29 @@ def load_data():
     # ----------------------------------------
     # ECART STOCK : dernier et avant-dernier fichiers
     # ----------------------------------------
-    ecart_files = sorted(github_list_excel_files_recursive("Ecart_Stock"))
-    if len(ecart_files) < 2:
-        raise FileNotFoundError("Pas assez de fichiers d’écart stock dans GitHub.")
 
-    file_prev = ecart_files[-2]  # avant-dernier
-    file_last = ecart_files[-1]  # dernier
+    ecart_files = github_list_excel_files_recursive("Ecart_Stock")
 
+    # Créer une liste tuples (fichier, date_interne)
+    files_with_dates = []
+    for f in ecart_files:
+        try:
+            date_creation = get_excel_creation_date_from_github(f)
+            files_with_dates.append((f, date_creation))
+        except Exception as e:
+            print(f"Impossible de lire la date de {f} :", e)
+
+    # Trier par date de création croissante
+    files_with_dates.sort(key=lambda x: x[1])
+
+    if len(files_with_dates) < 2:
+        raise FileNotFoundError("Pas assez de fichiers d’écart stock avec date interne.")
+
+    # Déterminer les fichiers avant-dernier et dernier
+    file_prev = files_with_dates[-2][0]
+    file_last = files_with_dates[-1][0]
+
+    # Lecture des fichiers Excel
     df_ecart_stock_prev = read_excel_from_github(file_prev)
     df_ecart_stock_last = read_excel_from_github(file_last)
 
