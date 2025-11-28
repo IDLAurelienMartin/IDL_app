@@ -35,6 +35,7 @@ import base64
 RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
 LOCAL_CACHE_DIR = Path("Cache")
 GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
+PARQUET_PATH = GIT_REPO_DIR / "Cache" / "ecart_stock_last.parquet"
 
 # On crée aussi le dossier Cache pour éviter les erreurs
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
@@ -943,7 +944,7 @@ def Analyse_stock():
                     new_row = {"MGB_6": str(mgb_selected), "Commentaire": commentaire, "Date_Dernier_Commentaire": today, "Choix_traitement": choix_source, "IDL_auto": False}
                     st.session_state.df_comments = pd.concat([st.session_state.df_comments, pd.DataFrame([new_row])], ignore_index=True)
                 # write once, then git push
-                st.session_state.df_comments.to_parquet(parquet_path, index=False)
+                st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
                 commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
                 
@@ -965,7 +966,7 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Commentaire"] = commentaire
                 st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
-                st.session_state.df_comments.to_parquet(parquet_path, index=False)
+                st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
                 commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
                 
@@ -1138,7 +1139,7 @@ def Analyse_stock():
         )
 
         # write parquet with comments after PDF generation (one save)
-        st.session_state.df_comments.to_parquet(parquet_path, index=False)
+        st.session_state.df_comments.to_parquet(PARQUET_PATH, index=False)
         commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
         st.success("PDF généré et commentaires sauvegardés.")
 
