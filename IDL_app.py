@@ -452,6 +452,42 @@ def Analyse_stock():
 
     st.title("Analyse des écarts de stock")
 
+    #----- test------
+    test_file = us.LOCAL_CACHE_DIR / "test_push.txt"
+    test_file.write_text(f"Test push {datetime.now()}")
+
+    st.write(f"Fichier créé : {test_file}")
+
+    if st.button("Tester GitHub push"):
+        if not us.GITHUB_TOKEN:
+            st.error("Token GitHub manquant")
+        else:
+            repo_path = "Cache/test_push.txt"
+            # Vérifier si le fichier existe pour récupérer le SHA
+            r = requests.get(f"{us.GITHUB_API_BASE}/test_push.txt", headers=us.HEADERS)
+            st.write(f"GET status: {r.status_code}")
+            sha = r.json().get("sha") if r.status_code == 200 else None
+
+            # Lire le fichier et encoder
+            with open(test_file, "rb") as f:
+                content_b64 = base64.b64encode(f.read()).decode()
+
+            payload = {
+                "message": f"Test push {datetime.now()}",
+                "content": content_b64,
+                "branch": us.GITHUB_BRANCH
+            }
+            if sha:
+                payload["sha"] = sha
+
+            put = requests.put(f"{us.GITHUB_API_BASE}/test_push.txt", headers=us.HEADERS, json=payload)
+            st.write(f"PUT status: {put.status_code}")
+            st.write(f"PUT response: {put.text}")
+            if put.status_code in [200, 201]:
+                st.success("✅ Test push réussi")
+            else:
+                st.error("❌ Test push échoué")
+
     # ---------- Prétraiter df_mvt_stock une seule fois ----------
     if not df_mvt_stock.empty:
         if "df_mvt_stock_processed" not in st.session_state:
