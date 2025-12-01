@@ -530,7 +530,9 @@ def Analyse_stock():
             st.success("UPLOAD OK → ton token et ton repo fonctionnent")
         else:
             st.error("UPLOAD REFUSÉ → erreur GitHub ci-dessus.")
-        return
+            return
+    
+    debug_push()
     
     if st.button("Lancer le test de fonction commit_and_push_github()"):
         st.info("Création d’un fichier parquet de test…")
