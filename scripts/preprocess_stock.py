@@ -13,18 +13,9 @@ import requests
 import shutil
 from io import BytesIO
 import numpy as np
-
-
-# ============================================================
-# === CONFIG GITHUB
-# ============================================================
-GITHUB_OWNER = "IDLAurelienMartin"
-GITHUB_REPO = "Data_IDL"
-GITHUB_BRANCH = "main"
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/"
-RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/"
-
+# Import local
+sys.path.append(str(Path(__file__).resolve().parent))
+import utils_stock as us
 
 # ============================================================
 # === UTILITAIRES GITHUB
@@ -36,7 +27,7 @@ def github_list_folder(folder_path: str):
     Retourne une liste de dictionnaires :
     [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
     """
-    url = API_BASE + folder_path
+    url = us.API_BASE + folder_path
     r = requests.get(url)
     if r.status_code != 200:
         print(f"Dossier introuvable sur GitHub : {url}")
@@ -66,7 +57,7 @@ def github_list_excel_files_recursive(folder_path: str):
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
     """Télécharge un Excel RAW depuis GitHub."""
-    url = RAW_BASE + path
+    url = us.RAW_BASE + path
     try:
         r = requests.get(url)
         r.raise_for_status()
@@ -78,7 +69,7 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
 
 def get_excel_creation_date_from_github(path: str) -> datetime:
     """Récupère la date interne d’un Excel depuis GitHub."""
-    url = RAW_BASE + path
+    url = us.RAW_BASE + path
     r = requests.get(url)
     r.raise_for_status()
 

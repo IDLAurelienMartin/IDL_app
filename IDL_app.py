@@ -30,26 +30,7 @@ from reportlab.pdfbase import pdfmetrics
 import base64
 import scripts.utils_stock as us
 
-# --- Dossier cache local sur Render ---
-# Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
-GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
-LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
-# --- Dossiers ---
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
-RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-# --- GitHub RAW pour Data_IDL ---
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GITHUB_OWNER = "IDLAurelienMartin"
-GITHUB_REPO = "Data_IDL"
-GITHUB_BRANCH = "main"
-GIT_REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
-RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
-
-# --- Dossiers ---
-PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
 # --- Chargement police compatible Render ---
 
@@ -685,15 +666,15 @@ def Analyse_stock():
     st.divider()
 
     # ---------- lecture automatique file_last / parquet_path (identique logique) ----------
-    file_last_txt = RENDER_CACHE_DIR / "file_last.txt"
+    file_last_txt = us.RENDER_CACHE_DIR / "file_last.txt"
     file_last = None
     try:
         if file_last_txt.exists():
             file_last = file_last_txt.read_text(encoding="utf-8").strip()
-        elif (LOCAL_CACHE_DIR / "file_last.txt").exists():
-            file_last = (LOCAL_CACHE_DIR / "file_last.txt").read_text(encoding="utf-8").strip()
+        elif (us.LOCAL_CACHE_DIR / "file_last.txt").exists():
+            file_last = (us.LOCAL_CACHE_DIR / "file_last.txt").read_text(encoding="utf-8").strip()
         else:
-            r = requests.get(RAW_BASE + "file_last.txt")
+            r = requests.get(us.RAW_BASE + "file_last.txt")
             r.raise_for_status()
             file_last = r.text.strip()
     except Exception as e:
@@ -702,16 +683,16 @@ def Analyse_stock():
 
     file_last_name = Path(file_last).name
     parquet_path = None
-    if (RENDER_CACHE_DIR / file_last_name).exists():
-        parquet_path = RENDER_CACHE_DIR / file_last_name
-    elif (LOCAL_CACHE_DIR / file_last_name).exists():
-        parquet_path = LOCAL_CACHE_DIR / file_last_name
+    if (us.RENDER_CACHE_DIR / file_last_name).exists():
+        parquet_path = us.RENDER_CACHE_DIR / file_last_name
+    elif (us.LOCAL_CACHE_DIR / file_last_name).exists():
+        parquet_path = us.LOCAL_CACHE_DIR / file_last_name
     else:
         try:
-            github_parquet_url = RAW_BASE + file_last_name
+            github_parquet_url = us.RAW_BASE + file_last_name
             r = requests.get(github_parquet_url)
             r.raise_for_status()
-            parquet_path = RENDER_CACHE_DIR / file_last_name
+            parquet_path = us.RENDER_CACHE_DIR / file_last_name
             parquet_path.write_bytes(r.content)
         except Exception as e:
             st.error(f"Impossible de récupérer le fichier parquet depuis GitHub : {file_last_name}\n{e}")
@@ -726,8 +707,8 @@ def Analyse_stock():
 
     # ---------- initialisation session df_comments ----------
     if "df_comments" not in st.session_state:
-        if PARQUET_FILE.exists():
-            df_existing = pd.read_parquet(PARQUET_FILE)
+        if us.PARQUET_FILE.exists():
+            df_existing = pd.read_parquet(us.PARQUET_FILE)
         else:
             df_existing = pd.DataFrame(
                 columns=["MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement", "IDL_auto"]
@@ -857,8 +838,8 @@ def Analyse_stock():
                 ], ignore_index=True)
 
             # --- sauvegarde + push GitHub ---
-            st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
-            us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
+            us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
 
 
@@ -889,8 +870,8 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Date_Dernier_Commentaire"] = today
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
 
-                st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
-                us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+                st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
+                us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
 
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
@@ -1066,14 +1047,14 @@ def Analyse_stock():
 
         # --- Sauvegarde du fichier parquet dans Cache ---
         try:
-            st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
+            st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
             st.info("Fichier parquet mis à jour dans Cache/")
         except Exception as e:
             st.error(f"Erreur lors de la sauvegarde du parquet : {e}")
 
         # --- Commit + Push GitHub ---
         try:
-            us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
             st.success("PDF généré, commentaires sauvegardés et envoyés sur GitHub.")
         except Exception as e:
             st.error(f"Erreur lors du push GitHub : {e}")

@@ -2,6 +2,9 @@
 import subprocess
 import sys
 from pathlib import Path
+# Import local
+sys.path.append(str(Path(__file__).resolve().parent))
+import utils_stock as us
 
 # Dossier de base du projet
 BASE_DIR = Path(__file__).resolve().parent
@@ -9,9 +12,6 @@ PYTHON = sys.executable  # Python du venv actif
 
 # Dossier local pour le cache
 CACHE_DIR = BASE_DIR.parent / "Cache"
-
-# URL du dépôt GitHub contenant les fichiers parquet
-GITHUB_REPO = "https://github.com/IDLAurelienMartin/Data_IDL.git"
 
 def run_script(script_name):
     """Exécute un script Python et affiche le résultat."""
@@ -30,7 +30,7 @@ def ensure_cache_cloned():
     """Clone le dépôt GitHub si le cache n'existe pas localement."""
     if not CACHE_DIR.exists():
         print("🌀 Cache local introuvable. Clonage depuis GitHub...")
-        result = subprocess.run(["git", "clone", GITHUB_REPO, str(CACHE_DIR)], capture_output=True, text=True)
+        result = subprocess.run(["git", "clone", us.GITHUB_REPO, str(CACHE_DIR)], capture_output=True, text=True)
         if result.returncode != 0:
             print("Erreur lors du clonage du dépôt :")
             print(result.stderr)

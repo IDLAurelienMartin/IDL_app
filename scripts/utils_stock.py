@@ -16,6 +16,8 @@ LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
 # --- Dossiers ---
+BASE_DIR = Path(__file__).resolve().parent
+CACHE_DIR = BASE_DIR.parent / "Cache"
 RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
 RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -12,16 +12,6 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
 import utils_stock as us
 
-# ===============================================
-# Configuration Render / GitHub
-# ===============================================
-RENDER_CACHE = Path("/opt/render/project/src/render_cache")  # cache utilisé par Render
-GITHUB_LOCAL = Path("/opt/render/project/src/Data_app")      # clone local du repo GitHub
-GITHUB_OWNER = "IDLAurelienMartin"
-GITHUB_REPO = "Data_IDL"
-GITHUB_BRANCH = "main"
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-
 # =====================================================
 # Pipeline complet : GitHub → Preprocess → Parquet → GitHub
 # =====================================================
@@ -66,7 +56,7 @@ def prepare_stock_data():
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
-    github_cache = GITHUB_LOCAL / "Cache"
+    github_cache = us.GITHUB_LOCAL / "Cache"
     github_cache.mkdir(parents=True, exist_ok=True)
     print(f"Dossier local GitHub pour parquets : {github_cache}")
 
@@ -95,7 +85,7 @@ def prepare_stock_data():
     print(f"Dernier fichier écart stock : {file_last_parquet}")
 
     # Commit & push via fonction centralisée
-    us.commit_and_push_github(GITHUB_LOCAL, GITHUB_BRANCH)
+    us.commit_and_push_github(us.GITHUB_LOCAL, us.GITHUB_BRANCH)
 
     print("\n=== FIN DU TRAITEMENT ===\n")
 
@@ -118,4 +108,4 @@ def copy_parquets_to_render_cache(github_local: Path, render_cache: Path):
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    copy_parquets_to_render_cache(GITHUB_LOCAL, RENDER_CACHE)
+    copy_parquets_to_render_cache(us.GITHUB_LOCAL, us.RENDER_CACHE)
