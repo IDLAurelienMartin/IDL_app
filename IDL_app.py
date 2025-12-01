@@ -432,6 +432,11 @@ def Analyse_stock():
     if df_article_euros.empty or df_ecart_stock_last.empty:
         st.warning("Fichiers indispensables manquants (article_euros ou ecart_stock_last).")
         st.stop()
+    
+    #---test---
+    headers = {"Authorization": f"token {us.GITHUB_TOKEN}"}
+    r = requests.get("https://api.github.com/user", headers=headers)
+    st.write(r.status_code, r.json())
 
     # ---------- harmonisation MGB_6 (vectorisée) ----------
     all_dfs = [
