@@ -8,6 +8,7 @@ from datetime import datetime
 import streamlit as st
 from PIL import ImageFont
 import subprocess
+import base64
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
@@ -57,6 +58,32 @@ def update_emplacement(row):
         return f"LITIGES-{emp}"
     else:
         return emp
+
+def upload_file_to_github(local_path: Path, repo_path: str, commit_msg: str):
+    with open(local_path, "rb") as f:
+        content = base64.b64encode(f.read()).decode()
+
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{repo_path}"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    
+    # Vérifier si le fichier existe déjà pour récupérer le sha
+    r = requests.get(url + f"?ref={GITHUB_BRANCH}", headers=headers)
+    data = {}
+    if r.status_code == 200:
+        sha = r.json()["sha"]
+        data["sha"] = sha
+    
+    data.update({
+        "message": commit_msg,
+        "content": content,
+        "branch": GITHUB_BRANCH
+    })
+
+    resp = requests.put(url, headers=headers, json=data)
+    if resp.status_code in (200, 201):
+        print(f"{repo_path} uploadé avec succès")
+    else:
+        print(resp.json())
 
 def commit_and_push_github(local_repo: Path, branch: str):
     """

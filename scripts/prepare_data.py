@@ -85,6 +85,7 @@ def prepare_stock_data():
     # Commit & push via fonction centralisée
     try:
         us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
+        us.upload_file_to_github(Path("Cache/mvt_stock.parquet"), "Cache/mvt_stock.parquet", "Update mvt_stock.parquet")
         st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
     except Exception as e:
         st.error(f"Erreur lors du commit/push GitHub : {e}")
