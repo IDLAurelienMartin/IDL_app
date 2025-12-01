@@ -433,10 +433,18 @@ def Analyse_stock():
         st.warning("Fichiers indispensables manquants (article_euros ou ecart_stock_last).")
         st.stop()
     
-    #---test---
-    headers = {"Authorization": f"token {us.GITHUB_TOKEN}"}
-    r = requests.get("https://api.github.com/user", headers=headers)
-    st.write(r.status_code, r.json())
+    # Crée un fichier test
+    test_file = us.GIT_REPO_DIR / "Cache/test.txt"
+    test_file.parent.mkdir(exist_ok=True)
+    test_file.write_text("Test push depuis Render\n")
+
+    # Ajouter, commit, push
+    subprocess.run(["git", "add", "."], cwd=us.GIT_REPO_DIR)
+    subprocess.run(["git", "commit", "-m", "Test push Render"], cwd=us.GIT_REPO_DIR)
+    subprocess.run(
+        ["git", "push", f"https://{us.GITHUB_TOKEN}@github.com/{us.GITHUB_OWNER}/{us.GITHUB_REPO}.git", us.GITHUB_BRANCH],
+        cwd=us.GIT_REPO_DIR
+    )
 
     # ---------- harmonisation MGB_6 (vectorisée) ----------
     all_dfs = [
