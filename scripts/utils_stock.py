@@ -72,34 +72,56 @@ def update_emplacement(row):
 
 def commit_and_push_github():
     """
-    Commit et push des fichiers Parquet vers le repo Data_IDL depuis Render.
+    Met à jour tous les fichiers Parquet de LOCAL_CACHE_DIR dans GitHub Data_IDL via l'API.
+    Fonctionne directement sur Render, sans git local.
     """
-    # Copier les fichiers
+    if not GITHUB_TOKEN:
+        st.error("⚠️ GitHub token non trouvé")
+        return
+
     for file in LOCAL_CACHE_DIR.glob("*.parquet"):
-        dest = DATA_IDL_CACHE / file.name
-        shutil.copy(file, dest)
-    shutil.copy(LOCAL_CACHE_DIR / "file_last.txt", DATA_IDL_CACHE)
+        repo_path = f"Cache/{file.name}"
+        # Vérifier si le fichier existe pour récupérer le sha
+        r = requests.get(f"{GITHUB_API_BASE}/{file.name}", headers=HEADERS)
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+        else:
+            sha = None
 
-    # Initialiser git si nécessaire
-    if not (DATA_IDL_DIR / ".git").exists():
-        subprocess.run(["git", "init"], cwd=DATA_IDL_DIR, check=True)
-        subprocess.run(["git", "remote", "add", "origin", GIT_REPO_URL], cwd=DATA_IDL_DIR, check=True)
+        # Lire le fichier et encoder en base64
+        with open(file, "rb") as f:
+            content_b64 = base64.b64encode(f.read()).decode()
 
+        payload = {
+            "message": f"Update {file.name} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "content": content_b64,
+            "branch": GITHUB_BRANCH,
+        }
+        if sha:
+            payload["sha"] = sha
 
-    # Ajouter tous les fichiers
-    subprocess.run(["git", "add", "-A"], cwd=DATA_IDL_CACHE, check=True)
+        put = requests.put(f"{GITHUB_API_BASE}/{file.name}", headers=HEADERS, json=payload)
+        if put.status_code in [200, 201]:
+            st.success(f"✅ {file.name} mis à jour sur GitHub")
+        else:
+            st.error(f"❌ Erreur GitHub {file.name}: {put.status_code} {put.text}")
 
-    # Commit avec allow-empty pour toujours forcer
-    commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    subprocess.run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=DATA_IDL_CACHE, check=True)
-
-    # Push forcé
-    try:
-        subprocess.run(["git", "push", "-u", "origin", GITHUB_BRANCH], cwd=DATA_IDL_CACHE, check=True)
-        st.success("✅ Tous les parquets ont été poussés sur Data_IDL.")
-    except subprocess.CalledProcessError as e:
-        st.error(f"Erreur push GitHub Data_IDL : {e}")
-
+    # Copier le file_last.txt aussi
+    last_file = LOCAL_CACHE_DIR / "file_last.txt"
+    if last_file.exists():
+        repo_path = "Cache/file_last.txt"
+        r = requests.get(f"{GITHUB_API_BASE}/file_last.txt", headers=HEADERS)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        with open(last_file, "rb") as f:
+            content_b64 = base64.b64encode(f.read()).decode()
+        payload = {"message": "Update file_last.txt", "content": content_b64, "branch": GITHUB_BRANCH}
+        if sha:
+            payload["sha"] = sha
+        put = requests.put(f"{GITHUB_API_BASE}/file_last.txt", headers=HEADERS, json=payload)
+        if put.status_code in [200, 201]:
+            st.success("✅ file_last.txt mis à jour sur GitHub")
+        else:
+            st.error(f"❌ Erreur file_last.txt: {put.status_code} {put.text}")
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes
