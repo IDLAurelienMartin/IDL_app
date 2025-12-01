@@ -121,6 +121,7 @@ def commit_and_push_github():
         else:
             st.error(f"Erreur push {file_name}: {put_r.status_code} → {put_r.text}")
             raise Exception(f"Push failed for {file_name}")
+    return
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

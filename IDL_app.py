@@ -453,41 +453,85 @@ def Analyse_stock():
     st.title("Analyse des écarts de stock")
 
     #----- test------
-    test_file = us.LOCAL_CACHE_DIR / "test_push.txt"
-    test_file.write_text(f"Test push {datetime.now()}")
+    def debug_push():
+        st.title("DEBUG PUSH GITHUB")
 
-    st.write(f"Fichier créé : {test_file}")
+        repo = "IDLAurelienMartin/Data_IDL"
+        branch = "main"
+        token = st.secrets["GITHUB_TOKEN"]
+        LOCAL_CACHE_DIR = Path("/opt/render/project/src/Cache")
+        github_api = f"https://api.github.com/repos/{repo}/contents/Cache"
 
-    if st.button("Tester GitHub push"):
-        if not us.GITHUB_TOKEN:
-            st.error("Token GitHub manquant")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json"
+        }
+
+        # ----------------------------------------------------------
+        # 1) Vérifier que le dossier local contient bien des fichiers
+        # ----------------------------------------------------------
+        st.subheader("1) Contenu du cache local")
+        local_files = list(LOCAL_CACHE_DIR.glob("*.*"))
+        st.write(local_files)
+
+        if not local_files:
+            st.error("AUCUN fichier trouvé dans /opt/render/project/src/Cache !!!")
+            return
+
+        # ----------------------------------------------------------
+        # 2) Vérifier que le token fonctionne
+        # ----------------------------------------------------------
+        st.subheader("2) Vérification du token GitHub")
+
+        check = requests.get("https://api.github.com/user", headers=headers)
+        st.write("Status:", check.status_code)
+        st.write("Réponse:", check.json())
+
+        if check.status_code != 200:
+            st.error("TOKEN INVALIDE → GitHub refuse l’accès")
+            return
+
+        st.success("Token valide.")
+
+        # ----------------------------------------------------------
+        # 3) Lire les fichiers présents dans GitHub
+        # ----------------------------------------------------------
+        st.subheader("3) Fichiers visibles côté GitHub")
+
+        gh_list = requests.get(github_api, headers=headers)
+        st.write("Status:", gh_list.status_code)
+        st.write("Réponse:", gh_list.json())
+
+        if gh_list.status_code != 200:
+            st.error("Impossible de lister les fichiers GitHub.")
+            return
+
+        # ----------------------------------------------------------
+        # 4) Test d'upload FORCÉ d’un fichier test
+        # ----------------------------------------------------------
+        st.subheader("4) TEST UPLOAD FORCÉ")
+
+        test_file = LOCAL_CACHE_DIR / "debug_test_upload.txt"
+        test_file.write_text("HELLO " + str(datetime.utcnow()))
+
+        encoded = base64.b64encode(test_file.read_bytes()).decode()
+        url = f"{github_api}/debug_test_upload.txt"
+
+        r = requests.put(url, headers=headers, json={
+            "message": "DEBUG UPLOAD",
+            "content": encoded,
+            "branch": branch
+        })
+
+        st.write("Status:", r.status_code)
+        st.write("Réponse:", r.text)
+
+        if r.status_code in (200, 201):
+            st.success("UPLOAD OK → ton token et ton repo fonctionnent")
         else:
-            repo_path = "Cache/test_push.txt"
-            # Vérifier si le fichier existe pour récupérer le SHA
-            r = requests.get(f"{us.GITHUB_API_BASE}/test_push.txt", headers=us.HEADERS)
-            st.write(f"GET status: {r.status_code}")
-            sha = r.json().get("sha") if r.status_code == 200 else None
-
-            # Lire le fichier et encoder
-            with open(test_file, "rb") as f:
-                content_b64 = base64.b64encode(f.read()).decode()
-
-            payload = {
-                "message": f"Test push {datetime.now()}",
-                "content": content_b64,
-                "branch": us.GITHUB_BRANCH
-            }
-            if sha:
-                payload["sha"] = sha
-
-            put = requests.put(f"{us.GITHUB_API_BASE}/test_push.txt", headers=us.HEADERS, json=payload)
-            st.write(f"PUT status: {put.status_code}")
-            st.write(f"PUT response: {put.text}")
-            if put.status_code in [200, 201]:
-                st.success("✅ Test push réussi")
-            else:
-                st.error("❌ Test push échoué")
-
+            st.error("UPLOAD REFUSÉ → erreur GitHub ci-dessus.")
+        return
+    
     if st.button("Lancer le test de fonction commit_and_push_github()"):
         st.info("Création d’un fichier parquet de test…")
 
