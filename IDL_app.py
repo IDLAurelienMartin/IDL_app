@@ -463,13 +463,19 @@ def Analyse_stock():
         # 1) Vérifier que le dossier local contient bien des fichiers
         # ----------------------------------------------------------
         st.subheader("1) Contenu du cache local")
-        local_files = list(us.LOCAL_CACHE_DIR.glob("*.*"))
-        st.write(local_files)
+        local_files_1 = list(us.LOCAL_CACHE_DIR.glob("*.*"))
+        local_files_2 = list(us.DATA_IDL_CACHE.glob("*.*"))
+        local_files_3 = list(us.RENDER_CACHE_DIR.glob("*.*"))
+        st.write("LOCAL_CACHE_DIR : ", local_files_1)
+        st.write("DATA_IDL_CACHE : ", local_files_2)
+        st.write("RENDER_CACHE_DIR: ", local_files_3)
 
-        if not local_files:
+        if not local_files_1:
             st.error("AUCUN fichier trouvé dans /opt/render/project/src/Cache !!!")
-            return
-
+        if not local_files_2:
+            st.error("AUCUN fichier trouvé dans /opt/render/project/src/Data_IDL/Cache !!!")
+        if not local_files_3:
+            st.error("AUCUN fichier trouvé dans /opt/render/project/src/render_cache !!!")
         # ----------------------------------------------------------
         # 2) Vérifier que le token fonctionne
         # ----------------------------------------------------------
