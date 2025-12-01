@@ -95,12 +95,12 @@ def prepare_stock_data():
 # =====================================================
 # Copier les Parquet depuis GitHub local vers Render cache
 # =====================================================
-#def copy_parquets_to_render_cache():
- #   us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-  #  for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
-   #     shutil.copy(file, us.RENDER_CACHE_DIR)
-    #shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
-    #st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
+def copy_parquets_to_render_cache():
+    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
+        shutil.copy(file, us.RENDER_CACHE_DIR)
+    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
+    st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
 
 
 # =====================================================

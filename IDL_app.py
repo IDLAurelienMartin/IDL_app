@@ -417,7 +417,7 @@ def Analyse_stock():
     #@st.cache_data(ttl=300)
     #def cached_parquet_load(name):
         # wrapper autour de ton load_parquet existant (doit exister dans le scope global)
-      #  return us.load_parquet(name)
+    #    return us.load_parquet(name)
 
     # ---------- charger fichiers (mis en cache) ----------
     df_article_euros = us.load_parquet("article_euros.parquet")
