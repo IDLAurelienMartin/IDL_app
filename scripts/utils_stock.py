@@ -10,12 +10,18 @@ from PIL import ImageFont
 import subprocess
 import base64
 import json
+import shutil
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
 GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+
+# --- Repo Data_IDL ---
+DATA_IDL_DIR = Path("/opt/render/project/src/Data_IDL")
+DATA_IDL_CACHE = DATA_IDL_DIR / "Cache"
+DATA_IDL_CACHE.mkdir(parents=True, exist_ok=True)
 
 # --- Dossiers ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -64,56 +70,36 @@ def update_emplacement(row):
     else:
         return emp
 
-def upload_file_to_github(file_path: Path, repo_path: str, commit_message: str):
-    # Vérifier si le fichier existe déjà sur GitHub pour récupérer le sha
-    get_url = f"{GITHUB_API_BASE}/{repo_path}"
-    r = requests.get(get_url, headers=HEADERS)
-    if r.status_code == 200:
-        sha = r.json()["sha"]
-    else:
-        sha = None  # fichier inexistant => création
-
-    # Lire le fichier en base64
-    with open(file_path, "rb") as f:
-        content_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-    payload = {
-        "message": commit_message,
-        "content": content_b64,
-        "branch": GITHUB_BRANCH,
-    }
-    if sha:
-        payload["sha"] = sha
-
-    put_url = f"{GITHUB_API_BASE}/{repo_path}"
-    r = requests.put(put_url, headers=HEADERS, data=json.dumps(payload))
-    if r.status_code in [200, 201]:
-        st.info(f"✅ {repo_path} mis à jour sur GitHub")
-    else:
-        st.error(f"❌ Erreur GitHub pour {repo_path} : {r.status_code} {r.text}")
-
-def commit_and_push_github(local_repo: Path, branch: str):
+def commit_and_push_github():
     """
-    Commit et push des changements depuis le repo local vers GitHub.
-    Force le commit même si aucun changement pour écraser les fichiers.
+    Commit et push des fichiers Parquet vers le repo Data_IDL depuis Render.
     """
-    if not GITHUB_TOKEN:
-        st.error("⚠️ GitHub token non trouvé dans les variables d'environnement.")
-        return
+    # Copier les fichiers
+    for file in LOCAL_CACHE_DIR.glob("*.parquet"):
+        dest = DATA_IDL_CACHE / file.name
+        shutil.copy(file, dest)
+    shutil.copy(LOCAL_CACHE_DIR / "file_last.txt", DATA_IDL_CACHE)
 
-    # Ajouter tous les fichiers modifiés
-    subprocess.run(["git", "add", "-A"], cwd=local_repo, check=True)
+    # Initialiser git si nécessaire
+    if not (DATA_IDL_DIR / ".git").exists():
+        subprocess.run(["git", "init"], cwd=DATA_IDL_DIR, check=True)
+        subprocess.run(["git", "remote", "add", "origin", GIT_REPO_URL], cwd=DATA_IDL_DIR, check=True)
 
-    # Commit avec option --allow-empty pour toujours créer un commit
+
+    # Ajouter tous les fichiers
+    subprocess.run(["git", "add", "-A"], cwd=DATA_IDL_CACHE, check=True)
+
+    # Commit avec allow-empty pour toujours forcer
     commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    subprocess.run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=local_repo, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=DATA_IDL_CACHE, check=True)
 
-    # Push forcé vers GitHub
+    # Push forcé
     try:
-        subprocess.run(["git", "push", GIT_REPO_URL, branch], cwd=local_repo, check=True)
-        st.info("✅ Tous les fichiers parquets ont été poussés sur GitHub.")
+        subprocess.run(["git", "push", "-u", "origin", GITHUB_BRANCH], cwd=DATA_IDL_CACHE, check=True)
+        st.success("✅ Tous les parquets ont été poussés sur Data_IDL.")
     except subprocess.CalledProcessError as e:
-        st.error(f"Erreur lors du push GitHub : {e}")
+        st.error(f"Erreur push GitHub Data_IDL : {e}")
+
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

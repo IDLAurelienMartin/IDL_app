@@ -433,11 +433,6 @@ def Analyse_stock():
         st.warning("Fichiers indispensables manquants (article_euros ou ecart_stock_last).")
         st.stop()
     
-    # Crée un fichier test
-    test_file = us.GIT_REPO_DIR / "Cache/test.txt"
-    test_file.parent.mkdir(exist_ok=True)
-    test_file.write_text("Test push depuis Render\n")
-
     # Ajouter, commit, push
     subprocess.run(["git", "add", "."], cwd=us.GIT_REPO_DIR)
     subprocess.run(["git", "commit", "-m", "Test push Render"], cwd=us.GIT_REPO_DIR)
