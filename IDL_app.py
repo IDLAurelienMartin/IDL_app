@@ -455,23 +455,15 @@ def Analyse_stock():
     #----- test------
     def debug_push():
         st.title("DEBUG PUSH GITHUB")
-
-        repo = "IDLAurelienMartin/Data_IDL"
-        branch = "main"
-        token = st.secrets["GITHUB_TOKEN"]
-        LOCAL_CACHE_DIR = Path("/opt/render/project/src/Cache")
-        github_api = f"https://api.github.com/repos/{repo}/contents/Cache"
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json"
-        }
+        branch = "main"            
+        
+        headers = us.HEADERS
 
         # ----------------------------------------------------------
         # 1) Vérifier que le dossier local contient bien des fichiers
         # ----------------------------------------------------------
         st.subheader("1) Contenu du cache local")
-        local_files = list(LOCAL_CACHE_DIR.glob("*.*"))
+        local_files = list(us.LOCAL_CACHE_DIR.glob("*.*"))
         st.write(local_files)
 
         if not local_files:
@@ -498,7 +490,7 @@ def Analyse_stock():
         # ----------------------------------------------------------
         st.subheader("3) Fichiers visibles côté GitHub")
 
-        gh_list = requests.get(github_api, headers=headers)
+        gh_list = requests.get(us.GITHUB_API_BASE, headers=headers)
         st.write("Status:", gh_list.status_code)
         st.write("Réponse:", gh_list.json())
 
@@ -511,11 +503,11 @@ def Analyse_stock():
         # ----------------------------------------------------------
         st.subheader("4) TEST UPLOAD FORCÉ")
 
-        test_file = LOCAL_CACHE_DIR / "debug_test_upload.txt"
+        test_file = us.LOCAL_CACHE_DIR / "debug_test_upload.txt"
         test_file.write_text("HELLO " + str(datetime.utcnow()))
 
         encoded = base64.b64encode(test_file.read_bytes()).decode()
-        url = f"{github_api}/debug_test_upload.txt"
+        url = f"{us.GITHUB_API_BASE}/debug_test_upload.txt"
 
         r = requests.put(url, headers=headers, json={
             "message": "DEBUG UPLOAD",
@@ -534,6 +526,7 @@ def Analyse_stock():
     
     debug_push()
     
+
     if st.button("Lancer le test de fonction commit_and_push_github()"):
         st.info("Création d’un fichier parquet de test…")
 
