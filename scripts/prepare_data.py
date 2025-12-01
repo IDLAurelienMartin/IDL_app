@@ -108,4 +108,4 @@ def copy_parquets_to_render_cache():
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    #copy_parquets_to_render_cache()
+    copy_parquets_to_render_cache()

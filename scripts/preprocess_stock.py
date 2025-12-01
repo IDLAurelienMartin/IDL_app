@@ -635,11 +635,11 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
         
-        parquet_path = Path(r"https://github.com/IDLAurelienMartin/Data_IDL/blob/main/Cache/ecart_stock_last.parquet")
+        local_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
-        if parquet_path.exists():
+        if local_parquet.exists():
             try:
-                df_old = pd.read_parquet(parquet_path)
+                df_old = pd.read_parquet(local_parquet)
 
                 expected = {"MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"}
                 if expected.issubset(set(df_old.columns)):
