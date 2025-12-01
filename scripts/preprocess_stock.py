@@ -30,7 +30,7 @@ def github_list_folder(folder_path: str):
     url = us.API_BASE + folder_path
     r = requests.get(url)
     if r.status_code != 200:
-        print(f"Dossier introuvable sur GitHub : {url}")
+        st.error(f"Dossier introuvable sur GitHub : {url}")
         return []
     return r.json()
 
@@ -63,7 +63,7 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
         r.raise_for_status()
         return pd.read_excel(BytesIO(r.content))
     except:
-        print(f"Échec lecture : {url}")
+        st.error(f"Échec lecture : {url}")
         return pd.DataFrame()
 
 
@@ -100,7 +100,7 @@ def load_data():
         date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
         print("Date interne inventaire :", date_ref)
     except Exception as e:
-        print("Erreur lecture métadonnées inventaire -> fallback now()", e)
+        st.error("Erreur lecture métadonnées inventaire -> fallback now()", e)
         date_ref = datetime.now()
 
     df_inventaire = read_excel_from_github(INVENTORY_PATH)
@@ -131,7 +131,7 @@ def load_data():
             date_creation = get_excel_creation_date_from_github(f)
             files_with_dates.append((f, date_creation))
         except Exception as e:
-            print(f"Impossible de lire la date de {f} :", e)
+            st.error(f"Impossible de lire la date de {f} :", e)
 
     # Trier par date de création croissante
     files_with_dates.sort(key=lambda x: x[1])
@@ -423,7 +423,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
-            print("df_article_euros vide ou non trouvé.")
+            st.info("df_article_euros vide ou non trouvé.")
         else:
             # Toujours travailler en str pour éviter surprises
             df_article_euros = df_article_euros.astype(str)
@@ -490,7 +490,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                         ref_col = 'ref'
                         break
                 if not ref_col: # toujours pas trouvé
-                    print("Colonne référence non trouvée dans df_article_euros.")
+                    st.error("Colonne référence non trouvée dans df_article_euros.")
 
             # 7) Convertir Prix_Unitaire en float (retirer '€', remplacer virgule par point)
             if 'Prix_Unitaire' in df_article_euros.columns:
@@ -501,7 +501,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 s = s.str.replace(',', '.', regex=False)
                 df_article_euros['Prix_Unitaire'] = pd.to_numeric(s, errors='coerce')
             else:
-                print("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
+                st.error("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
 
         #--- ETAT STOCK ---
         if 'Ref Metro' not in df_etat_stock.columns and 'SubSys' in df_etat_stock.columns:
@@ -675,18 +675,18 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     # --- supprimer toutes les colonnes finissant par _old (robuste) ---
                     old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
                     if old_cols:
-                        print(f"Suppression des colonnes temporaires : {old_cols}")
+                        st.info(f"Suppression des colonnes temporaires : {old_cols}")
                         df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
                     else:
-                        print("Aucune colonne *_old à supprimer.")
+                        st.error("Aucune colonne *_old à supprimer.")
 
                 else:
-                    print("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
+                    st.error("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
 
             except Exception as e:
-                print(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
+                st.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
         else:
-            print("Aucun ancien parquet trouvé sur OneDrive, création initiale du fichier.")
+            st.info("Aucun ancien parquet trouvé, création initiale du fichier.")
 
         def remove_full_duplicate_rows(df):
             """

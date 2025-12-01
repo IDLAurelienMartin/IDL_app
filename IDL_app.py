@@ -30,12 +30,9 @@ from reportlab.pdfbase import pdfmetrics
 import base64
 import scripts.utils_stock as us
 
-
-
 # --- Chargement police compatible Render ---
 
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
-
 
 def tab_home():
     st.title("Accueil")
@@ -602,7 +599,7 @@ def Analyse_stock():
     col1, col2 = st.columns(2)
     mgb_list = df_affiche['MGB_6'].dropna().unique() if not df_affiche.empty else []
     if len(mgb_list) == 0:
-        st.info("Aucune ligne à afficher après filtrage.")
+        st.error("Aucune ligne à afficher après filtrage.")
         st.stop()
 
     mgb_selected = col1.selectbox("Choisir un MGB", mgb_list)
@@ -720,7 +717,7 @@ def Analyse_stock():
     # ---------- Sélection MGB ----------
     mgb_list = df_comments["MGB_6"].astype(str).unique().tolist() if not df_comments.empty else []
     if len(mgb_list) == 0:
-        st.info("Aucune ligne à afficher.")
+        st.error("Aucune ligne à afficher.")
         st.stop()
 
     mgb_selected = st.selectbox("Choisir un MGB", mgb_list)

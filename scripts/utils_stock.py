@@ -68,7 +68,7 @@ def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "
     """
     token = os.environ.get(token_env_var)
     if not token:
-        print("⚠️ GitHub token non trouvé dans les variables d'environnement.")
+        st.error("⚠️ GitHub token non trouvé dans les variables d'environnement.")
         return
 
     # Configurer le remote temporaire avec token
@@ -82,7 +82,7 @@ def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "
     if remote_url.startswith("https://"):
         auth_remote = remote_url.replace("https://", f"https://{token}@")
     else:
-        print("⚠️ URL du remote non HTTPS, push impossible via token.")
+        st.error("⚠️ URL du remote non HTTPS, push impossible via token.")
         return
 
     # Ajouter tous les fichiers modifiés
@@ -91,7 +91,7 @@ def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "
     # Vérifier s'il y a quelque chose à committer
     result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=local_repo)
     if result.returncode == 0:
-        print("Aucun changement à committer.")
+        st.info("Aucun changement à committer.")
         return
 
     # Commit
@@ -100,9 +100,9 @@ def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "
         subprocess.run(["git", "commit", "-m", commit_message], cwd=local_repo, check=True)
         # Push
         subprocess.run(["git", "push", auth_remote, branch], cwd=local_repo, check=True)
-        print("✅ Push GitHub terminé avec succès.")
+        st.info("✅ Push GitHub terminé avec succès.")
     except subprocess.CalledProcessError as e:
-        print(f"Erreur lors du commit ou push : {e}")
+        st.error(f"Erreur lors du commit ou push : {e}")
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

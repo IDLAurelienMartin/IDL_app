@@ -6,6 +6,7 @@ from datetime import datetime
 import subprocess
 import os
 import shutil
+import streamlit as st
 
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -16,7 +17,7 @@ import utils_stock as us
 # Pipeline complet : GitHub → Preprocess → Parquet → GitHub
 # =====================================================
 def prepare_stock_data():
-    print("\n=== SCRIPT prepare_stock_data ===")
+    st.info("\n=== SCRIPT prepare_stock_data ===")
 
     # 1) Chargement depuis GitHub
     (
@@ -58,7 +59,7 @@ def prepare_stock_data():
     # 3) Sauvegarde Parquet dans GitHub local
     github_cache = us.GITHUB_LOCAL / "Cache"
     github_cache.mkdir(parents=True, exist_ok=True)
-    print(f"Dossier local GitHub pour parquets : {github_cache}")
+    st.info(f"Dossier local GitHub pour parquets : {github_cache}")
 
     datasets = {
         "mvt_stock": df_mvt_stock,
@@ -75,17 +76,21 @@ def prepare_stock_data():
         path = github_cache / f"{name}.parquet"
         # Toujours sauvegarder, même si vide
         df.to_parquet(path, index=False)
-        print(f"{name}.parquet sauvegardé ({len(df)} lignes)")
+        st.info(f"{name}.parquet sauvegardé ({len(df)} lignes)")
 
 
     # Enregistrer le dernier fichier traité
     file_last_parquet = github_cache / "ecart_stock_last.parquet"
     with open(github_cache / "file_last.txt", "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
-    print(f"Dernier fichier écart stock : {file_last_parquet}")
+    st.info(f"Dernier fichier écart stock : {file_last_parquet}")
 
     # Commit & push via fonction centralisée
-    us.commit_and_push_github(us.GITHUB_LOCAL, us.GITHUB_BRANCH)
+    try:
+        us.commit_and_push_github(us.GITHUB_LOCAL, us.GITHUB_BRANCH)
+        st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
+    except Exception as e:
+        st.error(f"Erreur lors du commit/push GitHub : {e}")
 
     print("\n=== FIN DU TRAITEMENT ===\n")
 
