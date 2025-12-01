@@ -56,57 +56,30 @@ def prepare_stock_data():
         df_excel_ean,
     )
 
-    # 3) Sauvegarde Parquet dans GitHub local
-
+    # 3) Sauvegarder localement avant upload
+    local_cache = Path("/opt/render/project/src/render_cache")
+    local_cache.mkdir(exist_ok=True)
     datasets = {
-        "mvt_stock": df_mvt_stock,
-        "reception": df_reception,
-        "sorties": df_sorties,
-        "inventaire": df_inventaire,
-        "ecart_stock_last": df_ecart_stock_last,
-        "ecart_stock_prev": df_ecart_stock_prev,
-        "article_euros": df_article_euros,
-        "etat_stock" : df_etat_stock,
+        "mvt_stock.parquet": df_mvt_stock,
+        "reception.parquet": df_reception,
+        "sorties.parquet": df_sorties,
+        "inventaire.parquet": df_inventaire,
+        "ecart_stock_last.parquet": df_ecart_stock_last,
+        "ecart_stock_prev.parquet": df_ecart_stock_prev,
+        "article_euros.parquet": df_article_euros,
+        "etat_stock.parquet": df_etat_stock,
     }
 
-    for name, df in datasets.items():
-        path = us.LOCAL_CACHE_DIR / f"{name}.parquet"
-        df["update_ts"] = datetime.now()  # forcage commit
-        df.to_parquet(path, index=False)
-        st.info(f"{name}.parquet sauvegardé ({len(df)} lignes)")
-
-
-    # Dernier fichier traité
-    file_last_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
-    with open(us.LOCAL_CACHE_DIR / "file_last.txt", "w", encoding="utf-8") as f:
-        f.write(str(file_last_parquet))
-    st.info(f"Dernier fichier écart stock : {file_last_parquet}")
-
-    # Commit & push via fonction centralisée
-    try:
-        us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
-        us.upload_file_to_github(Path("Cache/mvt_stock.parquet"), "Cache/mvt_stock.parquet", "Update mvt_stock.parquet")
-        st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
-    except Exception as e:
-        st.error(f"Erreur lors du commit/push GitHub : {e}")
+    for fname, df in datasets.items():
+        local_path = local_cache / fname
+        df.to_parquet(local_path, index=False)
+        commit_msg = f"Update {fname} via Render {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        us.upload_file_to_github(local_path, fname, commit_msg)
 
     print("\n=== FIN DU TRAITEMENT ===\n")
-
-
-# =====================================================
-# Copier les Parquet depuis GitHub local vers Render cache
-# =====================================================
-def copy_parquets_to_render_cache():
-    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
-        shutil.copy(file, us.RENDER_CACHE_DIR)
-    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
-    st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
-
 
 # =====================================================
 # Exécution principale
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    copy_parquets_to_render_cache()

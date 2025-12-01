@@ -9,6 +9,7 @@ import streamlit as st
 from PIL import ImageFont
 import subprocess
 import base64
+import json
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
@@ -28,8 +29,12 @@ GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
 GIT_REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
+GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/Cache"
 RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
-
+HEADERS = {
+    "Authorization": f"token {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github.v3+json",
+}
 # --- Dossiers ---
 PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
@@ -59,31 +64,33 @@ def update_emplacement(row):
     else:
         return emp
 
-def upload_file_to_github(local_path: Path, repo_path: str, commit_msg: str):
-    with open(local_path, "rb") as f:
-        content = base64.b64encode(f.read()).decode()
-
-    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{repo_path}"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-    
-    # Vérifier si le fichier existe déjà pour récupérer le sha
-    r = requests.get(url + f"?ref={GITHUB_BRANCH}", headers=headers)
-    data = {}
+def upload_file_to_github(file_path: Path, repo_path: str, commit_message: str):
+    # Vérifier si le fichier existe déjà sur GitHub pour récupérer le sha
+    get_url = f"{GITHUB_API_BASE}/{repo_path}"
+    r = requests.get(get_url, headers=HEADERS)
     if r.status_code == 200:
         sha = r.json()["sha"]
-        data["sha"] = sha
-    
-    data.update({
-        "message": commit_msg,
-        "content": content,
-        "branch": GITHUB_BRANCH
-    })
-
-    resp = requests.put(url, headers=headers, json=data)
-    if resp.status_code in (200, 201):
-        print(f"{repo_path} uploadé avec succès")
     else:
-        print(resp.json())
+        sha = None  # fichier inexistant => création
+
+    # Lire le fichier en base64
+    with open(file_path, "rb") as f:
+        content_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    payload = {
+        "message": commit_message,
+        "content": content_b64,
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    put_url = f"{GITHUB_API_BASE}/{repo_path}"
+    r = requests.put(put_url, headers=HEADERS, data=json.dumps(payload))
+    if r.status_code in [200, 201]:
+        st.info(f"✅ {repo_path} mis à jour sur GitHub")
+    else:
+        st.error(f"❌ Erreur GitHub pour {repo_path} : {r.status_code} {r.text}")
 
 def commit_and_push_github(local_repo: Path, branch: str):
     """
