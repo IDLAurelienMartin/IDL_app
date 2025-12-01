@@ -488,6 +488,38 @@ def Analyse_stock():
             else:
                 st.error("❌ Test push échoué")
 
+    if st.button("Lancer le test de fonction commit_and_push_github()"):
+        st.info("Création d’un fichier parquet de test…")
+
+        # 1) Création d'un fichier parquet de test
+        test_df = pd.DataFrame({
+            "col1": [1, 2, 3],
+            "col2": ["A", "B", "C"],
+            "ts": [datetime.now()] * 3
+        })
+
+        test_file = us.LOCAL_CACHE_DIR / "test_push.parquet"
+        test_df.to_parquet(test_file, index=False)
+
+        st.success(f"Fichier créé : {test_file}")
+
+        st.info("Lancement du commit_and_push_github()…")
+
+        # 2) Appel direct de ta fonction
+        results = us.commit_and_push_github()
+
+        # 3) Affichage détaillé des retours
+        st.subheader("Résultats détaillés du push :")
+        if not results:
+            st.error("Aucun résultat retourné (la fonction n'a peut-être pas été exécutée).")
+        else:
+            for file_name, status, text in results:
+                st.write(f"### Fichier : `{file_name}`")
+                st.write(f"**Status HTTP :** {status}")
+                st.write("**Réponse GitHub :**")
+                st.code(text[:2000])  # tronqué pour éviter les très longues réponses
+
+
     # ---------- Prétraiter df_mvt_stock une seule fois ----------
     if not df_mvt_stock.empty:
         if "df_mvt_stock_processed" not in st.session_state:
@@ -877,7 +909,7 @@ def Analyse_stock():
             # --- sauvegarde + push GitHub ---
 
             st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
-            us.commit_and_push_parquets_to_github()
+            us.commit_and_push_github()
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
 
 
@@ -909,7 +941,7 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
 
                 st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
-                us.commit_and_push_parquets_to_github()
+                us.commit_and_push_github()
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
                 
@@ -1091,7 +1123,7 @@ def Analyse_stock():
 
         # --- Commit + Push GitHub ---
         try:
-            us.commit_and_push_parquets_to_github()
+            us.commit_and_push_github()
             st.success("PDF généré, commentaires sauvegardés et envoyés sur GitHub.")
         except Exception as e:
             st.error(f"Erreur lors du push GitHub : {e}")

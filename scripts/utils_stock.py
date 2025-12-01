@@ -70,52 +70,77 @@ def update_emplacement(row):
     else:
         return emp
 
-def commit_and_push_parquets_to_github():
+def commit_and_push_github():
     """
-    Pousse tous les fichiers .parquet et file_last.txt depuis LOCAL_CACHE_DIR
-    vers le dossier Cache du repo Data_IDL via l'API GitHub.
+    Pousse tous les .parquet + file_last.txt depuis LOCAL_CACHE_DIR -> Cache/ du repo Data_IDL
+    en utilisant l'API GitHub (PUT /repos/:owner/:repo/contents/Cache/<name>).
+    Retourne une liste de tuples (file_name, status_code, response_text) pour debug.
     """
+    results = []
+
+    if not GITHUB_TOKEN:
+        st.error("GITHUB_TOKEN non défini dans les variables d'environnement.")
+        return results
+
     files_to_push = list(LOCAL_CACHE_DIR.glob("*.parquet"))
     file_last = LOCAL_CACHE_DIR / "file_last.txt"
     if file_last.exists():
         files_to_push.append(file_last)
 
     if not files_to_push:
-        st.warning("Aucun fichier à pousser vers GitHub.")
-        return
+        st.info("Aucun fichier .parquet ni file_last.txt trouvé à pousser.")
+        return results
 
     for file_path in files_to_push:
-        repo_path = f"Cache/{file_path.name}"
-        commit_message = f"Update {file_path.name} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        # Vérifier si le fichier existe déjà pour récupérer le sha
+        repo_rel = f"Cache/{file_path.name}"
         get_url = f"{GITHUB_API_BASE}/{file_path.name}"
-        r = requests.get(get_url, headers=HEADERS)
-        if r.status_code == 200:
-            sha = r.json()["sha"]
-        else:
-            sha = None
 
-        # Lire le fichier en base64
-        with open(file_path, "rb") as f:
-            content_b64 = base64.b64encode(f.read()).decode("utf-8")
+        # 1) récupérer sha si fichier existe
+        try:
+            r_get = requests.get(get_url, headers=HEADERS, timeout=30)
+            if r_get.status_code == 200:
+                sha = r_get.json().get("sha")
+            elif r_get.status_code == 404:
+                sha = None
+            else:
+                # log et continuer (peut être permissions)
+                results.append((file_path.name, r_get.status_code, f"GET error: {r_get.text}"))
+                continue
+        except Exception as e:
+            results.append((file_path.name, None, f"GET exception: {e}"))
+            continue
 
+        # 2) lire et encoder en base64
+        try:
+            with open(file_path, "rb") as f:
+                content_b64 = base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            results.append((file_path.name, None, f"Read exception: {e}"))
+            continue
+
+        # 3) construire payload
         payload = {
-            "message": commit_message,
+            "message": f"Update {file_path.name} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "content": content_b64,
             "branch": GITHUB_BRANCH
         }
         if sha:
             payload["sha"] = sha
 
-        # Envoi sur GitHub
-        put_url = f"{GITHUB_API_BASE}/{file_path.name}"
-        r = requests.put(put_url, headers=HEADERS, data=json.dumps(payload))
+        # 4) PUT
+        try:
+            r_put = requests.put(get_url, headers=HEADERS, data=json.dumps(payload), timeout=60)
+            results.append((file_path.name, r_put.status_code, r_put.text))
+            # afficher dans Streamlit pour info
+            if r_put.status_code in (200, 201):
+                st.info(f"✅ {file_path.name} mis à jour sur GitHub ({r_put.status_code})")
+            else:
+                st.error(f"❌ Erreur {r_put.status_code} pour {file_path.name}: {r_put.text}")
+        except Exception as e:
+            results.append((file_path.name, None, f"PUT exception: {e}"))
+            st.error(f"Exception lors du PUT pour {file_path.name}: {e}")
 
-        if r.status_code in [200, 201]:
-            st.success(f"✅ {file_path.name} mis à jour sur GitHub")
-        else:
-            st.error(f"❌ Erreur GitHub pour {file_path.name} : {r.status_code} {r.text}")
+    return results
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

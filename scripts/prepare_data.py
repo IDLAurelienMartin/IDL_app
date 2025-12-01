@@ -84,7 +84,7 @@ def prepare_stock_data():
 
     # Commit & push via fonction centralisée
     try:
-        us.commit_and_push_parquets_to_github()
+        us.commit_and_push_github()
         st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
     except Exception as e:
         st.error(f"Erreur lors du commit/push GitHub : {e}")
