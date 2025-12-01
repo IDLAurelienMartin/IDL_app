@@ -24,11 +24,11 @@ import requests
 import fitz
 from PyPDF2 import PdfReader, PdfWriter
 import sys
-from scripts.prepare_data import update_emplacement, ajouter_totaux, color_rows 
 import numpy as np
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import base64
+import scripts.utils_stock as us
 
 # --- Dossier cache local sur Render ---
 # Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
@@ -55,12 +55,6 @@ PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 
-def load_font(font_size: int):
-    try:
-        return ImageFont.truetype(str(FONT_PATH), font_size)
-    except Exception as e:
-        st.error(f"Erreur chargement police : {e}")
-        return ImageFont.load_default()
 
 def tab_home():
     st.title("Accueil")
@@ -275,7 +269,7 @@ def tab_QR_Codes():
                 qr_img = qr_img.resize((qr_width, qr_height))
                 combined.paste(qr_img, (-20, -20) if nb_qr_format == "Grand Format" else (-10, -10))
 
-                font = load_font(font_size)
+                font = us.load_font(font_size)
 
                 bbox = draw.textbbox((0, 0), texte_affiche, font=font)
                 text_width = bbox[2] - bbox[0]
@@ -441,120 +435,6 @@ def tab_QR_Codes():
                     if st.button("Effacer le code barre"):
                             st.experimental_rerun()
 
-def load_parquet(file_name):
-    """
-    Charge un parquet en suivant cet ordre :
-    1) Render cache
-    2) Local cache interne (Cache/)
-    3) GitHub RAW (Data_IDL)
-    """
-    # 1) Render cache
-    render_path = RENDER_CACHE_DIR / file_name
-    if render_path.exists():
-        return pd.read_parquet(render_path)
-    
-    # 2) Local cache
-    local_path = LOCAL_CACHE_DIR / file_name
-    if local_path.exists():
-        return pd.read_parquet(local_path)
-    
-    # 3) GitHub RAW fallback
-    github_url = RAW_BASE + file_name
-    try:
-        r = requests.get(github_url)
-        r.raise_for_status()
-        df = pd.read_parquet(BytesIO(r.content))
-        return df
-    except Exception as e:
-        st.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
-        return pd.DataFrame()
-
-def save_parquet_local(df, file_name):
-    """
-    Sauvegarde UNIQUE dans le dossier Cache/ interne.
-    Render ne permet pas d'écrire dans render_cache (lecture seule).
-    """
-    local_path = LOCAL_CACHE_DIR / file_name
-    df.to_parquet(local_path, index=False)
-    st.success(f"{file_name} sauvegardé dans Cache/")
-
-def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "GITHUB_TOKEN"):
-    """
-    Commit et push des changements depuis le repo local vers GitHub.
-    local_repo: dossier racine du repo
-    branch: branche GitHub
-    token_env_var: nom de la variable d'environnement contenant le token
-    """
-    token = os.environ.get(token_env_var)
-    if not token:
-        print("⚠️ GitHub token non trouvé dans les variables d'environnement.")
-        return
-
-    # Configurer le remote temporaire avec token
-    remote_url = subprocess.run(
-        ["git", "config", "--get", "remote.origin.url"],
-        cwd=local_repo,
-        capture_output=True,
-        text=True
-    ).stdout.strip()
-
-    if remote_url.startswith("https://"):
-        auth_remote = remote_url.replace("https://", f"https://{token}@")
-    else:
-        print("⚠️ URL du remote non HTTPS, push impossible via token.")
-        return
-
-    # Ajouter tous les fichiers modifiés
-    subprocess.run(["git", "add", "."], cwd=local_repo, check=False)
-
-    # Vérifier s'il y a quelque chose à committer
-    result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=local_repo)
-    if result.returncode == 0:
-        print("Aucun changement à committer.")
-        return
-
-    # Commit
-    commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    try:
-        subprocess.run(["git", "commit", "-m", commit_message], cwd=local_repo, check=True)
-        # Push
-        subprocess.run(["git", "push", auth_remote, branch], cwd=local_repo, check=True)
-        print("✅ Push GitHub terminé avec succès.")
-    except subprocess.CalledProcessError as e:
-        print(f"Erreur lors du commit ou push : {e}")
-
-def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
-    # Conversion des colonnes
-    if date_col in df.columns:
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    if heure_col in df.columns:
-        # Convertir en time uniquement
-        df[heure_col] = pd.to_datetime(df[heure_col], format="%H:%M:%S", errors="coerce").dt.time
-
-    # Créer colonne temporaire pour le tri
-    if date_col in df.columns:
-        if heure_col in df.columns:
-            df["DateHeure"] = df.apply(
-                lambda row: datetime.combine(row[date_col].date(), row[heure_col])
-                if pd.notna(row[heure_col]) else row[date_col],
-                axis=1
-            )
-            df.sort_values(by="DateHeure", ascending=False, inplace=True)
-        else:
-            df.sort_values(by=date_col, ascending=False, inplace=True)
-
-    # Harmoniser l'affichage
-    if date_col in df.columns:
-        df[date_col] = df[date_col].dt.strftime("%d/%m/%Y")
-    if heure_col in df.columns:
-        df[heure_col] = df[heure_col].apply(lambda t: t.strftime("%H:%M:%S") if pd.notna(t) else "")
-
-    # Supprimer colonne temporaire
-    if "DateHeure" in df.columns:
-        df.drop(columns="DateHeure", inplace=True)
-
-    return df
-
 def Analyse_stock():
 
     st.set_page_config(layout="wide")
@@ -563,7 +443,7 @@ def Analyse_stock():
     @st.cache_data(ttl=300)
     def cached_parquet_load(name):
         # wrapper autour de ton load_parquet existant (doit exister dans le scope global)
-        return load_parquet(name)
+        return us.load_parquet(name)
 
     # ---------- charger fichiers (mis en cache) ----------
     df_article_euros = cached_parquet_load("article_euros.parquet")
@@ -596,7 +476,7 @@ def Analyse_stock():
             # use apply once then cache in session state
             try:
                 df_mvt_stock_proc = df_mvt_stock.copy()
-                df_mvt_stock_proc["Emplacement"] = df_mvt_stock_proc.apply(update_emplacement, axis=1)
+                df_mvt_stock_proc["Emplacement"] = df_mvt_stock_proc.apply(us.update_emplacement, axis=1)
                 df_mvt_stock_proc = df_mvt_stock_proc.drop(columns=["prefix_emplacement"], errors="ignore")
                 st.session_state.df_mvt_stock_processed = df_mvt_stock_proc
             except Exception:
@@ -754,17 +634,17 @@ def Analyse_stock():
     sorties_info = df_sorties[df_sorties['MGB_6'] == mgb_selected].copy()
 
     # ---------- tri des tableaux : par date puis heure ----------
-    df_affiche = harmoniser_et_trier(df_affiche)
-    mvt_stock_info = harmoniser_et_trier(mvt_stock_info)
-    reception_info = harmoniser_et_trier(reception_info)
-    sorties_info = harmoniser_et_trier(sorties_info)
+    df_affiche = us.harmoniser_et_trier(df_affiche)
+    mvt_stock_info = us.harmoniser_et_trier(mvt_stock_info)
+    reception_info = us.harmoniser_et_trier(reception_info)
+    sorties_info = us.harmoniser_et_trier(sorties_info)
 
     # ---------- métriques (utilitaire ajouter_totaux réutilisé) ----------
-    totaux_stock = ajouter_totaux(stock_info, ["MMS_Stock","WMS_Stock","Difference_MMS-WMS","Valeur_Difference"])
-    totaux_inventaire = ajouter_totaux(inventaire_info, ["Inventaire_Final_Quantity"])
-    totaux_mvt_stock = ajouter_totaux(mvt_stock_info, ["Qty_Mouvement"])
-    totaux_reception = ajouter_totaux(reception_info, ["Qty_Reception"])
-    totaux_sorties = ajouter_totaux(sorties_info, ["Qty/Article/Poids"])
+    totaux_stock = us.ajouter_totaux(stock_info, ["MMS_Stock","WMS_Stock","Difference_MMS-WMS","Valeur_Difference"])
+    totaux_inventaire = us.ajouter_totaux(inventaire_info, ["Inventaire_Final_Quantity"])
+    totaux_mvt_stock = us.ajouter_totaux(mvt_stock_info, ["Qty_Mouvement"])
+    totaux_reception = us.ajouter_totaux(reception_info, ["Qty_Reception"])
+    totaux_sorties = us.ajouter_totaux(sorties_info, ["Qty/Article/Poids"])
 
     stock_theorique = (
         totaux_inventaire.get('Inventaire_Final_Quantity', 0)
@@ -794,7 +674,7 @@ def Analyse_stock():
 
     st.subheader("Tableau des mouvements de stock")
     # color_rows est réutilisé mais on évite apply coûteux en l'appliquant sur la subset (déjà petit)
-    st.dataframe(mvt_stock_info.style.apply(color_rows, axis=1) if not mvt_stock_info.empty else mvt_stock_info, use_container_width=True)
+    st.dataframe(mvt_stock_info.style.apply(us.color_rows, axis=1) if not mvt_stock_info.empty else mvt_stock_info, use_container_width=True)
 
     st.subheader("Tableau des réceptions")
     st.dataframe(reception_info, use_container_width=True)
@@ -978,7 +858,7 @@ def Analyse_stock():
 
             # --- sauvegarde + push GitHub ---
             st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
-            commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
 
 
@@ -1010,7 +890,7 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
 
                 st.session_state.df_comments.to_parquet(PARQUET_FILE, index=False)
-                commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+                us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
 
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
@@ -1193,12 +1073,10 @@ def Analyse_stock():
 
         # --- Commit + Push GitHub ---
         try:
-            commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
+            us.commit_and_push_github(GIT_REPO_DIR, GITHUB_BRANCH)
             st.success("PDF généré, commentaires sauvegardés et envoyés sur GitHub.")
         except Exception as e:
             st.error(f"Erreur lors du push GitHub : {e}")
-
-
 
 def tab_Detrompeurs():
     st.title("Détrompeurs")

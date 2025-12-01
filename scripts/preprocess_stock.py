@@ -21,7 +21,7 @@ import numpy as np
 GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
-
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/"
 RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/"
 

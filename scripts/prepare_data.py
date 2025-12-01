@@ -10,6 +10,7 @@ import shutil
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
+import utils_stock as us
 
 # ===============================================
 # Configuration Render / GitHub
@@ -20,31 +21,6 @@ GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-
-
-# =====================================================
-# Fonctions utilitaires
-# =====================================================
-def ajouter_totaux(df, colonnes_totaux):
-    if df.empty:
-        return {col: 0 for col in colonnes_totaux}
-    return {col: df[col].sum() if col in df.columns else 0 for col in colonnes_totaux}
-
-def color_rows(row):
-    return ['background-color: lightgreen'] * len(row) if row.get('Synchro_MMS') == 'Oui' else ['background-color: lightcoral'] * len(row)
-
-def update_emplacement(row):
-    prefix = row.get('prefix_emplacement', '')
-    emp = row.get('Emplacement', '')
-    if prefix == 'IN':
-        return f"{prefix}-{emp}"
-    elif prefix == 'UNLOADING':
-        return 'DECHARGEMENT'
-    elif prefix == 'INSPECTION':
-        return f"LITIGES-{emp}"
-    else:
-        return emp
-
 
 # =====================================================
 # Pipeline complet : GitHub → Preprocess → Parquet → GitHub
@@ -118,18 +94,8 @@ def prepare_stock_data():
         f.write(str(file_last_parquet))
     print(f"Dernier fichier écart stock : {file_last_parquet}")
 
-    # 4) Commit & push vers GitHub
-    subprocess.run(["git", "add", "."], cwd=GITHUB_LOCAL, check=False)
-    try:
-        subprocess.run(
-            ["git", "commit", "-m", f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"],
-            cwd=GITHUB_LOCAL,
-            check=True
-        )
-        subprocess.run(["git", "push", "origin", GITHUB_BRANCH], cwd=GITHUB_LOCAL, check=False)
-        print("Push GitHub terminé avec les parquets.")
-    except subprocess.CalledProcessError:
-        print("Aucun changement à committer.")
+    # Commit & push via fonction centralisée
+    us.commit_and_push_github(GITHUB_LOCAL, GITHUB_BRANCH)
 
     print("\n=== FIN DU TRAITEMENT ===\n")
 
