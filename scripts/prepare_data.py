@@ -7,6 +7,7 @@ import subprocess
 import os
 import shutil
 import streamlit as st
+import requests
 
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -57,8 +58,6 @@ def prepare_stock_data():
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
-    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
     datasets = {
         "mvt_stock": df_mvt_stock,
         "reception": df_reception,
@@ -70,15 +69,19 @@ def prepare_stock_data():
         "etat_stock" : df_etat_stock,
     }
 
-    for name, df in datasets.items():
-        df["update_ts"] = datetime.now()  # forcage commit
-        local_path = us.LOCAL_CACHE_DIR / f"{name}.parquet"
-        render_path = us.RENDER_CACHE_DIR / f"{name}.parquet"
-        
-        df.to_parquet(local_path, index=False)   # sauvegarde locale
-        shutil.copy(local_path, render_path)     # copie dans Render cache
-        
-        st.info(f"{name}.parquet sauvegardé ({len(df)} lignes) et copié dans Render cache")
+    def download_from_github(filename: str, dest_dir: Path):
+        url = f"{us.RAW_BASE}{filename}"
+        response = requests.get(url, headers=us.HEADERS)
+        if response.status_code == 200:
+            dest_file = dest_dir / filename
+            dest_file.write_bytes(response.content)
+            print(f"[OK] {filename} téléchargé dans {dest_dir}")
+        else:
+            print(f"[ERREUR] Impossible de télécharger {filename} ({response.status_code})")
+
+    # --- Synchronisation ---
+    for file in datasets:
+        download_from_github(file, us.LOCAL_CACHE_DIR)
         
     # Dernier fichier traité
     file_last_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
