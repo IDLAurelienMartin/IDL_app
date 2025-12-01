@@ -57,6 +57,7 @@ def prepare_stock_data():
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
+    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     datasets = {
         "mvt_stock": df_mvt_stock,
@@ -70,17 +71,21 @@ def prepare_stock_data():
     }
 
     for name, df in datasets.items():
-        path = us.LOCAL_CACHE_DIR / f"{name}.parquet"
         df["update_ts"] = datetime.now()  # forcage commit
-        df.to_parquet(path, index=False)
-        st.info(f"{name}.parquet sauvegardé ({len(df)} lignes)")
-
-
+        local_path = us.LOCAL_CACHE_DIR / f"{name}.parquet"
+        render_path = us.RENDER_CACHE_DIR / f"{name}.parquet"
+        
+        df.to_parquet(local_path, index=False)   # sauvegarde locale
+        shutil.copy(local_path, render_path)     # copie dans Render cache
+        
+        st.info(f"{name}.parquet sauvegardé ({len(df)} lignes) et copié dans Render cache")
+        
     # Dernier fichier traité
     file_last_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
     with open(us.LOCAL_CACHE_DIR / "file_last.txt", "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
-    st.info(f"Dernier fichier écart stock : {file_last_parquet}")
+    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
+    st.info(f"Dernier fichier écart stock : {file_last_parquet} copié dans Render cache")
 
     # Commit & push via fonction centralisée
     try:
@@ -91,21 +96,8 @@ def prepare_stock_data():
 
     print("\n=== FIN DU TRAITEMENT ===\n")
 
-
-# =====================================================
-# Copier les Parquet depuis GitHub local vers Render cache
-# =====================================================
-def copy_parquets_to_render_cache():
-    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
-        shutil.copy(file, us.RENDER_CACHE_DIR)
-    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
-    st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
-
-
 # =====================================================
 # Exécution principale
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    copy_parquets_to_render_cache()

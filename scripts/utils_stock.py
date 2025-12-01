@@ -1,4 +1,4 @@
-#scripts/utils_stock.py
+# scripts/utils_stock.py
 import os
 import pandas as pd
 import requests
@@ -7,29 +7,27 @@ from pathlib import Path
 from datetime import datetime
 import streamlit as st
 from PIL import ImageFont
-import subprocess
 import base64
-import json
 import shutil
 
-# --- Dossier cache local sur Render ---
-# Render place les fichiers persistants dans le dossier /opt/render/project/src/render_cache
+# ===================== DOSSIERS =====================
 GIT_REPO_DIR = Path("/opt/render/project/src")  # ton repo local
 LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
 LOCAL_CACHE_DIR.mkdir(exist_ok=True)
 
-# --- Repo Data_IDL ---
 DATA_IDL_DIR = Path("/opt/render/project/src/Data_IDL")
 DATA_IDL_CACHE = DATA_IDL_DIR / "Cache"
 DATA_IDL_CACHE.mkdir(parents=True, exist_ok=True)
 
-# --- Dossiers ---
 BASE_DIR = Path(__file__).resolve().parent
 CACHE_DIR = BASE_DIR.parent / "Cache"
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")  # lecture seule
+
+RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
 RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- GitHub RAW pour Data_IDL ---
+PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
+
+# ===================== GITHUB =====================
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_OWNER = "IDLAurelienMartin"
 GITHUB_REPO = "Data_IDL"
@@ -41,24 +39,24 @@ HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
     "Accept": "application/vnd.github.v3+json",
 }
-# --- Dossiers ---
-PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
-# --- Chargement police compatible Render ---
+# ===================== POLICE =====================
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 
+# =====================================================
+# Fonctions utilitaires
+# =====================================================
+
 def ajouter_totaux(df, colonnes_totaux):
-    if df.empty:
-        return {col: 0 for col in colonnes_totaux}
-    return {col: df[col].sum() if col in df.columns else 0 for col in colonnes_totaux}
+    """Retourne la somme des colonnes spécifiées."""
+    return {col: df[col].sum() if col in df.columns else 0 for col in colonnes_totaux} if not df.empty else {col: 0 for col in colonnes_totaux}
 
 def color_rows(row):
-    if row.get('Synchro_MMS') == 'Oui':
-        return ['background-color: lightgreen'] * len(row)
-    else:
-        return ['background-color: lightcoral'] * len(row)
+    """Coloration conditionnelle pour DataFrame style."""
+    return ['background-color: lightgreen' if row.get('Synchro_MMS') == 'Oui' else 'lightcoral'] * len(row)
 
 def update_emplacement(row):
+    """Met à jour l'emplacement selon le préfixe."""
     prefix = row.get('prefix_emplacement', '')
     emp = row.get('Emplacement', '')
     if prefix == 'IN':
@@ -70,129 +68,101 @@ def update_emplacement(row):
     else:
         return emp
 
-def commit_and_push_github():
-    
-    base_url = f"https://api.github.com/repos/{GITHUB_OWNER}/contents/Cache"
-
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
-
-    # Liste des fichiers à pousser
-    files_to_push = list(LOCAL_CACHE_DIR.glob("*.*"))
-
-    if not files_to_push:
-        st.warning("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
-        return
-
-    st.info(f"{len(files_to_push)} fichiers détectés dans LOCAL_CACHE_DIR…")
-
-    for file_path in files_to_push:
-
-        file_name = file_path.name
-        url = f"{base_url}/{file_name}"
-
-        # Lecture du fichier
-        content_bytes = file_path.read_bytes()
-        encoded = base64.b64encode(content_bytes).decode()
-
-        # Vérifie si le fichier existe déjà (pour récupérer le sha)
-        get_r = requests.get(url, headers=headers)
-
-        if get_r.status_code == 200:
-            sha = get_r.json().get("sha")
-        else:
-            sha = None
-
-        data = {
-            "message": f"Auto-update {file_name} {datetime.utcnow()}",
-            "content": encoded,
-            "branch": GITHUB_BRANCH
-        }
-
-        if sha:
-            data["sha"] = sha
-
-        put_r = requests.put(url, headers=headers, json=data)
-
-        if put_r.status_code in (200, 201):
-            st.success(f"{file_name} mis à jour sur GitHub ({put_r.status_code})")
-        else:
-            st.error(f"Erreur push {file_name}: {put_r.status_code} → {put_r.text}")
-            raise Exception(f"Push failed for {file_name}")
-    return
-
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
-    # Conversion des colonnes
+    """Convertit, trie et formate les colonnes Date/Heure."""
     if date_col in df.columns:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     if heure_col in df.columns:
-        # Convertir en time uniquement
         df[heure_col] = pd.to_datetime(df[heure_col], format="%H:%M:%S", errors="coerce").dt.time
 
-    # Créer colonne temporaire pour le tri
     if date_col in df.columns:
         if heure_col in df.columns:
             df["DateHeure"] = df.apply(
-                lambda row: datetime.combine(row[date_col].date(), row[heure_col])
-                if pd.notna(row[heure_col]) else row[date_col],
+                lambda row: datetime.combine(row[date_col].date(), row[heure_col]) if pd.notna(row[heure_col]) else row[date_col],
                 axis=1
             )
             df.sort_values(by="DateHeure", ascending=False, inplace=True)
         else:
             df.sort_values(by=date_col, ascending=False, inplace=True)
 
-    # Harmoniser l'affichage
     if date_col in df.columns:
         df[date_col] = df[date_col].dt.strftime("%d/%m/%Y")
     if heure_col in df.columns:
         df[heure_col] = df[heure_col].apply(lambda t: t.strftime("%H:%M:%S") if pd.notna(t) else "")
 
-    # Supprimer colonne temporaire
-    if "DateHeure" in df.columns:
-        df.drop(columns="DateHeure", inplace=True)
-
+    df.drop(columns="DateHeure", inplace=True, errors="ignore")
     return df
 
 def load_parquet(file_name):
-    """
-    Charge un parquet en suivant cet ordre :
-    1) Render cache
-    2) Local cache interne (Cache/)
-    3) GitHub RAW (Data_IDL)
-    """
-    # 1) Render cache
+    """Charge un parquet en suivant l'ordre Render → Local → GitHub RAW."""
+    # Render cache
     render_path = RENDER_CACHE_DIR / file_name
     if render_path.exists():
         return pd.read_parquet(render_path)
-    
-    # 2) Local cache
+
+    # Local cache
     local_path = LOCAL_CACHE_DIR / file_name
     if local_path.exists():
         return pd.read_parquet(local_path)
-    
-    # 3) GitHub RAW fallback
+
+    # GitHub RAW
     github_url = RAW_BASE + file_name
     try:
         r = requests.get(github_url)
         r.raise_for_status()
-        df = pd.read_parquet(BytesIO(r.content))
-        return df
+        return pd.read_parquet(BytesIO(r.content))
     except Exception as e:
         st.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
         return pd.DataFrame()
 
-def save_parquet_local(df, file_name):
-    """
-    Sauvegarde UNIQUE dans le dossier Cache/ interne.
-    Render ne permet pas d'écrire dans render_cache (lecture seule).
-    """
+def save_parquet_local(df, file_name, copy_to_render=True):
+    """Sauvegarde dans le cache local et copie dans Render si demandé."""
     local_path = LOCAL_CACHE_DIR / file_name
     df.to_parquet(local_path, index=False)
     st.success(f"{file_name} sauvegardé dans Cache/")
 
+    if copy_to_render and RENDER_CACHE_DIR.exists():
+        shutil.copy(local_path, RENDER_CACHE_DIR)
+        st.info(f"{file_name} copié dans le cache Render")
+
+def commit_and_push_github():
+    """Push automatique sur GitHub via API."""
+    if not GITHUB_TOKEN:
+        st.warning("GITHUB_TOKEN non défini, push GitHub ignoré.")
+        return
+
+    files_to_push = list(LOCAL_CACHE_DIR.glob("*.*"))
+    if not files_to_push:
+        st.info("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
+        return
+
+    for file_path in files_to_push:
+        file_name = file_path.name
+        url = f"{GITHUB_API_BASE}/{file_name}"
+        content_bytes = file_path.read_bytes()
+        encoded = base64.b64encode(content_bytes).decode()
+
+        # Vérifie si le fichier existe déjà
+        get_r = requests.get(url, headers=HEADERS)
+        sha = get_r.json().get("sha") if get_r.status_code == 200 else None
+
+        data = {
+            "message": f"Auto-update {file_name} {datetime.utcnow()}",
+            "content": encoded,
+            "branch": GITHUB_BRANCH
+        }
+        if sha:
+            data["sha"] = sha
+
+        put_r = requests.put(url, headers=HEADERS, json=data)
+        if put_r.status_code in (200, 201):
+            st.success(f"{file_name} mis à jour sur GitHub")
+        else:
+            st.error(f"Erreur push {file_name}: {put_r.status_code} → {put_r.text}")
+            raise Exception(f"Push failed for {file_name}")
+
 def load_font(font_size: int):
+    """Charge une police compatible Render."""
     try:
         return ImageFont.truetype(str(FONT_PATH), font_size)
     except Exception as e:
