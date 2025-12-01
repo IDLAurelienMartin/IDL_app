@@ -57,9 +57,6 @@ def prepare_stock_data():
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
-    github_cache = us.GITHUB_LOCAL / "Cache"
-    github_cache.mkdir(parents=True, exist_ok=True)
-    st.info(f"Dossier local GitHub pour parquets : {github_cache}")
 
     datasets = {
         "mvt_stock": df_mvt_stock,
@@ -73,21 +70,21 @@ def prepare_stock_data():
     }
 
     for name, df in datasets.items():
-        path = github_cache / f"{name}.parquet"
-        # Toujours sauvegarder, même si vide
+        path = us.LOCAL_CACHE_DIR / f"{name}.parquet"
+        df["update_ts"] = datetime.now()  # forcage commit
         df.to_parquet(path, index=False)
         st.info(f"{name}.parquet sauvegardé ({len(df)} lignes)")
 
 
-    # Enregistrer le dernier fichier traité
-    file_last_parquet = github_cache / "ecart_stock_last.parquet"
-    with open(github_cache / "file_last.txt", "w", encoding="utf-8") as f:
+    # Dernier fichier traité
+    file_last_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
+    with open(us.LOCAL_CACHE_DIR / "file_last.txt", "w", encoding="utf-8") as f:
         f.write(str(file_last_parquet))
     st.info(f"Dernier fichier écart stock : {file_last_parquet}")
 
     # Commit & push via fonction centralisée
     try:
-        us.commit_and_push_github(us.GITHUB_LOCAL, us.GITHUB_BRANCH)
+        us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
         st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
     except Exception as e:
         st.error(f"Erreur lors du commit/push GitHub : {e}")
@@ -98,14 +95,12 @@ def prepare_stock_data():
 # =====================================================
 # Copier les Parquet depuis GitHub local vers Render cache
 # =====================================================
-def copy_parquets_to_render_cache(github_local: Path, render_cache: Path):
-    render_cache.mkdir(parents=True, exist_ok=True)
-    github_cache = github_local / "Cache"
-
-    for file in github_cache.glob("*.parquet"):
-        shutil.copy(file, render_cache)
-    shutil.copy(github_cache / "file_last.txt", render_cache)
-    print(f"Parquets copiés dans le cache Render : {render_cache}")
+def copy_parquets_to_render_cache():
+    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
+        shutil.copy(file, us.RENDER_CACHE_DIR)
+    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
+    st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
 
 
 # =====================================================
@@ -113,4 +108,4 @@ def copy_parquets_to_render_cache(github_local: Path, render_cache: Path):
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    copy_parquets_to_render_cache(us.GITHUB_LOCAL, us.RENDER_CACHE)
+    copy_parquets_to_render_cache()

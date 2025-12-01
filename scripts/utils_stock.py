@@ -33,7 +33,6 @@ RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GIT
 PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
 # --- Chargement police compatible Render ---
-
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 
 def ajouter_totaux(df, colonnes_totaux):
@@ -59,43 +58,28 @@ def update_emplacement(row):
     else:
         return emp
 
-def commit_and_push_github(local_repo: Path, branch: str, token_env_var: str = "GITHUB_TOKEN"):
+def commit_and_push_github(local_repo: Path, branch: str):
     """
-    Commit et push forcé des fichiers depuis le repo local vers GitHub, même si Git pense qu'il n'y a pas de changement.
+    Commit et push des changements depuis le repo local vers GitHub.
+    Force le commit même si aucun changement pour écraser les fichiers.
     """
-    token = os.environ.get(token_env_var)
-    if not token:
+    if not GITHUB_TOKEN:
         st.error("⚠️ GitHub token non trouvé dans les variables d'environnement.")
         return
 
-    # Récupération de l'URL du remote
-    remote_url = subprocess.run(
-        ["git", "config", "--get", "remote.origin.url"],
-        cwd=local_repo,
-        capture_output=True,
-        text=True
-    ).stdout.strip()
+    # Ajouter tous les fichiers modifiés
+    subprocess.run(["git", "add", "-A"], cwd=local_repo, check=True)
 
-    if not remote_url.startswith("https://"):
-        st.error("⚠️ URL du remote non HTTPS, push impossible via token.")
-        return
+    # Commit avec option --allow-empty pour toujours créer un commit
+    commit_message = f"Update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    subprocess.run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=local_repo, check=True)
 
-    auth_remote = remote_url.replace("https://", f"https://{token}@")
-
+    # Push forcé vers GitHub
     try:
-        # Ajouter tous les fichiers (modifiés ou nouveaux)
-        subprocess.run(["git", "add", "-A"], cwd=local_repo, check=True)
-        
-        # Commit forcé, même si aucun changement détecté
-        commit_message = f"Force update parquets {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        subprocess.run(["git", "commit", "--allow-empty", "-m", commit_message], cwd=local_repo, check=True)
-        
-        # Push
-        subprocess.run(["git", "push", auth_remote, branch], cwd=local_repo, check=True)
-        st.success("✅ Tous les fichiers parquets commités et poussés sur GitHub.")
-
+        subprocess.run(["git", "push", GIT_REPO_URL, branch], cwd=local_repo, check=True)
+        st.info("✅ Tous les fichiers parquets ont été poussés sur GitHub.")
     except subprocess.CalledProcessError as e:
-        st.error(f"Erreur lors du commit/push GitHub : {e}")
+        st.error(f"Erreur lors du push GitHub : {e}")
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

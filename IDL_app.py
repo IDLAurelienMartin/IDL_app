@@ -30,10 +30,6 @@ from reportlab.pdfbase import pdfmetrics
 import base64
 import scripts.utils_stock as us
 
-# --- Chargement police compatible Render ---
-
-FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
-
 def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
@@ -1178,10 +1174,10 @@ def tab_Detrompeurs():
         c = canvas.Canvas(buffer_txt, pagesize=(page_width, page_height))
 
         # --- Police intégrée ---
-        font_path = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
+  
         font_size = 36
         try:
-            pdfmetrics.registerFont(TTFont("DejaVu", str(font_path)))
+            pdfmetrics.registerFont(TTFont("DejaVu", str(us.FONT_PATH)))
             font_name = "DejaVu"
         except Exception:
             font_name = "Helvetica-Bold"
@@ -1279,9 +1275,7 @@ def tab_Detrompeurs():
         def push_to_github(file_path, repo_path, commit_message="Ajout detrompeur"):
             with open(file_path,"rb") as f:
                 content_b64 = base64.b64encode(f.read()).decode()
-            repo_owner = "IDLAurelienMartin"
-            repo_name = "Data_IDL"
-            url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{repo_path}"
+            url = f"https://api.github.com/repos/{us.GITHUB_OWNER}/{us.GITHUB_REPO}/contents/{repo_path}"
             headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}"}
             r = requests.get(url, headers=headers)
             sha = r.json().get("sha") if r.status_code==200 else None
