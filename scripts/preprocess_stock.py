@@ -98,7 +98,7 @@ def load_data():
     INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
     try:
         date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
-        print("Date interne inventaire :", date_ref)
+        st.info("Date interne inventaire :", date_ref)
     except Exception as e:
         st.error("Erreur lecture métadonnées inventaire -> fallback now()", e)
         date_ref = datetime.now()
@@ -148,9 +148,7 @@ def load_data():
     df_ecart_stock_last = read_excel_from_github(file_last)
 
     # Sauvegarde du nom du dernier fichier pour référence (ex: cache Render)
-    render_cache_dir = Path("/opt/render/project/src/render_cache")
-    render_cache_dir.mkdir(parents=True, exist_ok=True)
-    file_last_txt = render_cache_dir / "file_last.txt"
+    file_last_txt = us.RENDER_CACHE_DIR / "file_last.txt"
     file_last_txt.write_text(file_last)  # on écrit le chemin GitHub, pas local
 
     # ----------------------------------------
