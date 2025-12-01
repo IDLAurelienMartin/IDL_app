@@ -84,7 +84,7 @@ def prepare_stock_data():
 
     # Commit & push via fonction centralisée
     try:
-        us.commit_and_push_github()
+        us.commit_and_push_parquets_to_github()
         st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
     except Exception as e:
         st.error(f"Erreur lors du commit/push GitHub : {e}")
@@ -95,12 +95,12 @@ def prepare_stock_data():
 # =====================================================
 # Copier les Parquet depuis GitHub local vers Render cache
 # =====================================================
-def copy_parquets_to_render_cache():
-    us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
-        shutil.copy(file, us.RENDER_CACHE_DIR)
-    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
-    st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
+#def copy_parquets_to_render_cache():
+ #   us.RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+  #  for file in us.LOCAL_CACHE_DIR.glob("*.parquet"):
+   #     shutil.copy(file, us.RENDER_CACHE_DIR)
+    #shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
+    #st.info(f"Parquets copiés dans le cache Render : {us.RENDER_CACHE_DIR}")
 
 
 # =====================================================
@@ -108,4 +108,4 @@ def copy_parquets_to_render_cache():
 # =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
-    copy_parquets_to_render_cache()
+    #copy_parquets_to_render_cache()

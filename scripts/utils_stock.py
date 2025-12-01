@@ -70,58 +70,52 @@ def update_emplacement(row):
     else:
         return emp
 
-def commit_and_push_github():
+def commit_and_push_parquets_to_github():
     """
-    Met à jour tous les fichiers Parquet de LOCAL_CACHE_DIR dans GitHub Data_IDL via l'API.
-    Fonctionne directement sur Render, sans git local.
+    Pousse tous les fichiers .parquet et file_last.txt depuis LOCAL_CACHE_DIR
+    vers le dossier Cache du repo Data_IDL via l'API GitHub.
     """
-    if not GITHUB_TOKEN:
-        st.error("⚠️ GitHub token non trouvé")
+    files_to_push = list(LOCAL_CACHE_DIR.glob("*.parquet"))
+    file_last = LOCAL_CACHE_DIR / "file_last.txt"
+    if file_last.exists():
+        files_to_push.append(file_last)
+
+    if not files_to_push:
+        st.warning("Aucun fichier à pousser vers GitHub.")
         return
 
-    for file in LOCAL_CACHE_DIR.glob("*.parquet"):
-        repo_path = f"Cache/{file.name}"
-        # Vérifier si le fichier existe pour récupérer le sha
-        r = requests.get(f"{GITHUB_API_BASE}/{file.name}", headers=HEADERS)
+    for file_path in files_to_push:
+        repo_path = f"Cache/{file_path.name}"
+        commit_message = f"Update {file_path.name} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Vérifier si le fichier existe déjà pour récupérer le sha
+        get_url = f"{GITHUB_API_BASE}/{file_path.name}"
+        r = requests.get(get_url, headers=HEADERS)
         if r.status_code == 200:
-            sha = r.json().get("sha")
+            sha = r.json()["sha"]
         else:
             sha = None
 
-        # Lire le fichier et encoder en base64
-        with open(file, "rb") as f:
-            content_b64 = base64.b64encode(f.read()).decode()
+        # Lire le fichier en base64
+        with open(file_path, "rb") as f:
+            content_b64 = base64.b64encode(f.read()).decode("utf-8")
 
         payload = {
-            "message": f"Update {file.name} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "message": commit_message,
             "content": content_b64,
-            "branch": GITHUB_BRANCH,
+            "branch": GITHUB_BRANCH
         }
         if sha:
             payload["sha"] = sha
 
-        put = requests.put(f"{GITHUB_API_BASE}/{file.name}", headers=HEADERS, json=payload)
-        if put.status_code in [200, 201]:
-            st.success(f"✅ {file.name} mis à jour sur GitHub")
-        else:
-            st.error(f"❌ Erreur GitHub {file.name}: {put.status_code} {put.text}")
+        # Envoi sur GitHub
+        put_url = f"{GITHUB_API_BASE}/{file_path.name}"
+        r = requests.put(put_url, headers=HEADERS, data=json.dumps(payload))
 
-    # Copier le file_last.txt aussi
-    last_file = LOCAL_CACHE_DIR / "file_last.txt"
-    if last_file.exists():
-        repo_path = "Cache/file_last.txt"
-        r = requests.get(f"{GITHUB_API_BASE}/file_last.txt", headers=HEADERS)
-        sha = r.json().get("sha") if r.status_code == 200 else None
-        with open(last_file, "rb") as f:
-            content_b64 = base64.b64encode(f.read()).decode()
-        payload = {"message": "Update file_last.txt", "content": content_b64, "branch": GITHUB_BRANCH}
-        if sha:
-            payload["sha"] = sha
-        put = requests.put(f"{GITHUB_API_BASE}/file_last.txt", headers=HEADERS, json=payload)
-        if put.status_code in [200, 201]:
-            st.success("✅ file_last.txt mis à jour sur GitHub")
+        if r.status_code in [200, 201]:
+            st.success(f"✅ {file_path.name} mis à jour sur GitHub")
         else:
-            st.error(f"❌ Erreur file_last.txt: {put.status_code} {put.text}")
+            st.error(f"❌ Erreur GitHub pour {file_path.name} : {r.status_code} {r.text}")
 
 def harmoniser_et_trier(df, date_col="Date", heure_col="Heure"):
     # Conversion des colonnes

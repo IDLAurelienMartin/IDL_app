@@ -414,19 +414,19 @@ def Analyse_stock():
     st.set_page_config(layout="wide")
 
     # ---------- utilitaire cache wrapper ----------
-    @st.cache_data(ttl=300)
-    def cached_parquet_load(name):
+    #@st.cache_data(ttl=300)
+    #def cached_parquet_load(name):
         # wrapper autour de ton load_parquet existant (doit exister dans le scope global)
-        return us.load_parquet(name)
+      #  return us.load_parquet(name)
 
     # ---------- charger fichiers (mis en cache) ----------
-    df_article_euros = cached_parquet_load("article_euros.parquet")
-    df_ecart_stock_prev = cached_parquet_load("ecart_stock_prev.parquet")
-    df_ecart_stock_last = cached_parquet_load("ecart_stock_last.parquet")
-    df_reception = cached_parquet_load("reception.parquet")
-    df_sorties = cached_parquet_load("sorties.parquet")
-    df_inventaire = cached_parquet_load("inventaire.parquet")
-    df_mvt_stock = cached_parquet_load("mvt_stock.parquet")
+    df_article_euros = us.load_parquet("article_euros.parquet")
+    df_ecart_stock_prev = us.load_parquet("ecart_stock_prev.parquet")
+    df_ecart_stock_last = us.load_parquet("ecart_stock_last.parquet")
+    df_reception = us.load_parquet("reception.parquet")
+    df_sorties = us.load_parquet("sorties.parquet")
+    df_inventaire = us.load_parquet("inventaire.parquet")
+    df_mvt_stock = us.load_parquet("mvt_stock.parquet")
 
     # vérification minimale
     if df_article_euros.empty or df_ecart_stock_last.empty:
@@ -875,8 +875,9 @@ def Analyse_stock():
                 ], ignore_index=True)
 
             # --- sauvegarde + push GitHub ---
+
             st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
-            us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
+            us.commit_and_push_parquets_to_github()
             st.success(f"Commentaire ajouté pour {mgb_selected} ({today}) !")
 
 
@@ -908,8 +909,7 @@ def Analyse_stock():
                 st.session_state.df_comments.at[ridx, "Choix_traitement"] = choix_source
 
                 st.session_state.df_comments.to_parquet(us.PARQUET_FILE, index=False)
-                us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
-
+                us.commit_and_push_parquets_to_github()
                 st.success(f"Commentaire mis à jour pour {mgb_selected} ({today}) !")
 
                 
@@ -1091,7 +1091,7 @@ def Analyse_stock():
 
         # --- Commit + Push GitHub ---
         try:
-            us.commit_and_push_github(us.GIT_REPO_DIR, us.GITHUB_BRANCH)
+            us.commit_and_push_parquets_to_github()
             st.success("PDF généré, commentaires sauvegardés et envoyés sur GitHub.")
         except Exception as e:
             st.error(f"Erreur lors du push GitHub : {e}")
