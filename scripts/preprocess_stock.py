@@ -40,7 +40,7 @@ def github_list_folder(folder_path: str):
     Retourne une liste de dictionnaires :
     [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
     """
-    url = us.RAW_BASE + folder_path
+    url = us.GITHUB_API_BASE + folder_path
     r = requests.get(url)
     if r.status_code != 200:
         logging.error(f"Dossier introuvable sur GitHub : {url}")

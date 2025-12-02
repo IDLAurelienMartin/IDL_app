@@ -1250,7 +1250,7 @@ def tab_Detrompeurs():
             img = Image.open(file).convert("RGBA")
             draw = ImageDraw.Draw(img)
             w, h = img.size
-            thick = max(5, w//100)
+            thick = max(50, w//100)
             draw.line((0,0,w,h), fill=(255,0,0,255), width=thick)
             draw.line((0,h,w,0), fill=(255,0,0,255), width=thick)
             buf = BytesIO()
