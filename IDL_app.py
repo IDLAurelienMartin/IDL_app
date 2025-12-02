@@ -33,6 +33,18 @@ import scripts.utils_stock as us
 def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
+
+        #-------TEST-------
+    SCRIPT_DIR = Path(__file__).parent.resolve() / "scripts"
+    LOG_FILE = SCRIPT_DIR / "prepare_data.log"
+
+    st.title("Debug Log")
+    if st.button("Affiche le log"):
+        # Affiche le log si présent
+        if LOG_FILE.exists():
+            st.text(LOG_FILE.read_text())
+        else:
+            st.warning("Le fichier de log n'existe pas encore.")
     
 def tab_QR_Codes():
     st.title("QR Codes et Code Barre")
@@ -440,20 +452,6 @@ def Analyse_stock():
         ["git", "push", f"https://{us.GITHUB_TOKEN}@github.com/{us.GITHUB_OWNER}/{us.GITHUB_REPO}.git", us.GITHUB_BRANCH],
         cwd=us.GIT_REPO_DIR
     )
-    #-------TEST-------
-    SCRIPT_DIR = Path(__file__).parent.resolve() / "scripts"
-    LOG_FILE = SCRIPT_DIR / "prepare_data.log"
-
-    if st.button("Exécuter prepare_data.py"):
-        # Lance le script
-        subprocess.run(["python3", str(SCRIPT_DIR / "prepare_data.py")], check=False)
-        st.success("Script exécuté. Le log devrait maintenant exister.")
-
-    # Affiche le log si présent
-    if LOG_FILE.exists():
-        st.text(LOG_FILE.read_text())
-    else:
-        st.warning("Le fichier de log n'existe pas encore.")
 
     # ---------- harmonisation MGB_6 (vectorisée) ----------
     all_dfs = [

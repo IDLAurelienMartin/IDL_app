@@ -111,9 +111,9 @@ def load_data():
     INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
     try:
         date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
-        logging.info("Date interne inventaire :", date_ref)
+        logging.info(f"Date interne inventaire : {date_ref}")
     except Exception as e:
-        logging.error("Erreur lecture métadonnées inventaire -> fallback now()", e)
+        logging.error(f"Erreur lecture métadonnées inventaire -> fallback now() {e}")
         date_ref = datetime.now()
 
     df_inventaire = read_excel_from_github(INVENTORY_PATH)
@@ -144,7 +144,7 @@ def load_data():
             date_creation = get_excel_creation_date_from_github(f)
             files_with_dates.append((f, date_creation))
         except Exception as e:
-            logging.error(f"Impossible de lire la date de {f} :", e)
+            logging.error(f"Impossible de lire la date de {f} : {e}")
 
     # Trier par date de création croissante
     files_with_dates.sort(key=lambda x: x[1])
@@ -175,13 +175,13 @@ def load_data():
     # Synthèse
     # ----------------------------------------
     logging.info("\n=== SYNTHÈSE GITHUB ===")
-    logging.info("Mvt Stock :", len(df_mvt_stock))
-    logging.info("Réception :", len(df_reception))
-    logging.info("Sorties   :", len(df_sorties))
-    logging.info("Écart prev:", len(df_ecart_stock_prev))
-    logging.info("Écart last:", len(df_ecart_stock_last))
-    logging.info("Articles €:", len(df_article_euros))
-    logging.info("Inventaire:", len(df_inventaire))
+    logging.info(f"Mvt Stock : {len(df_mvt_stock)}")
+    logging.info(f"Réception : {len(df_reception)}")
+    logging.info(f"Sorties   : {len(df_sorties)}")
+    logging.info(f"Écart prev: {len(df_ecart_stock_prev)}")
+    logging.info(f"Écart last: {len(df_ecart_stock_last)}")
+    logging.info(f"Articles €: {len(df_article_euros)}")
+    logging.info(f"Inventaire: {len(df_inventaire)}")
 
     return (
         df_mvt_stock,
@@ -524,6 +524,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             essential_cols = ['MGB', 'Description', 'Ref Metro']
             missing_cols = [c for c in essential_cols if c not in df_etat_stock.columns]
             if missing_cols:
+                logging.error(f"Colonnes manquantes dans l'état stock : {missing_cols}")
                 raise ValueError(f"Colonnes manquantes dans l'état stock : {missing_cols}")
 
             df_etat_stock = df_etat_stock[essential_cols].copy()
@@ -590,7 +591,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             df_target[value_col] = df_target[quantity_col] * df_target[price_col]
 
             if display_in_streamlit:
-                logging.dataframe(df_target.style.format({price_col: "{:.2f}", value_col: "{:.2f}"}))
+                st.dataframe(df_target.style.format({price_col: "{:.2f}", value_col: "{:.2f}"}))
 
             return df_target
         def remove_duplicate_columns(df):
@@ -692,7 +693,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                         logging.error("Aucune colonne *_old à supprimer.")
 
                 else:
-                    logging.error("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
+                    logging.error(f"Le parquet existant ne contient pas toutes les colonnes attendues : {expected & set(df_old.columns)}")
 
             except Exception as e:
                 logging.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
