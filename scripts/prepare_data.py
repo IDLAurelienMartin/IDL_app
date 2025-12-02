@@ -8,6 +8,7 @@ import os
 import shutil
 import streamlit as st
 import requests
+import base64
 
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -58,6 +59,33 @@ def prepare_stock_data():
     )
 
     # 3) Sauvegarde Parquet dans GitHub local
+    # --- Répertoire temporaire pour les fichiers parquet ---
+    LOCAL_TEMP_DIR = Path("./temp_cache")
+    LOCAL_TEMP_DIR.mkdir(exist_ok=True)
+
+    # --- Fonction pour push un fichier sur GitHub ---
+    def push_file_to_github(file_path: Path, filename: str):
+        """Push un fichier directement dans le dossier Cache du repo GitHub."""
+        url = f"{us.GITHUB_API_BASE}/{filename}"
+        with open(file_path, "rb") as f:
+            content = f.read()
+        b64_content = base64.b64encode(content).decode()
+
+        # Vérifie si le fichier existe pour récupérer le SHA
+        r = requests.get(url, headers={"Authorization": f"token {us.GITHUB_TOKEN}"})
+        sha = r.json().get("sha") if r.status_code == 200 else None
+
+        data = {"message": f"Update {filename}", "content": b64_content, "branch": "main"}
+        if sha:
+            data["sha"] = sha
+
+        r = requests.put(url, headers={"Authorization": f"token {us.GITHUB_TOKEN}"}, json=data)
+        if r.status_code in [200, 201]:
+            st.success(f"[OK] {filename} pushé sur GitHub")
+        else:
+            st.error(f"[ERREUR] {filename} non pushé : {r.status_code} {r.text}")
+
+    # --- DataFrames à push ---
     datasets = {
         "mvt_stock": df_mvt_stock,
         "reception": df_reception,
@@ -66,36 +94,24 @@ def prepare_stock_data():
         "ecart_stock_last": df_ecart_stock_last,
         "ecart_stock_prev": df_ecart_stock_prev,
         "article_euros": df_article_euros,
-        "etat_stock" : df_etat_stock,
+        "etat_stock": df_etat_stock,
     }
 
-    def download_from_github(filename: str, dest_dir: Path):
-        url = f"{us.RAW_BASE}{filename}"
-        response = requests.get(url, headers=us.HEADERS)
-        if response.status_code == 200:
-            dest_file = dest_dir / filename
-            dest_file.write_bytes(response.content)
-            print(f"[OK] {filename} téléchargé dans {dest_dir}")
-        else:
-            print(f"[ERREUR] Impossible de télécharger {filename} ({response.status_code})")
+    # --- Push des fichiers parquet ---
+    for name, df in datasets.items():
+        temp_file = LOCAL_TEMP_DIR / f"{name}.parquet"
+        df.to_parquet(temp_file, index=False)
+        push_file_to_github(temp_file, f"{name}.parquet")
 
-    # --- Synchronisation ---
-    for file in datasets:
-        download_from_github(file, us.LOCAL_CACHE_DIR)
-        
-    # Dernier fichier traité
-    file_last_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
-    with open(us.LOCAL_CACHE_DIR / "file_last.txt", "w", encoding="utf-8") as f:
-        f.write(str(file_last_parquet))
-    shutil.copy(us.LOCAL_CACHE_DIR / "file_last.txt", us.RENDER_CACHE_DIR)
-    st.info(f"Dernier fichier écart stock : {file_last_parquet} copié dans Render cache")
+    # --- Mettre à jour file_last.txt sur GitHub ---
+    file_last_path = LOCAL_TEMP_DIR / "file_last.txt"
+    file_last_path.write_text("ecart_stock_last.parquet", encoding="utf-8")
+    push_file_to_github(file_last_path, "file_last.txt")
 
-    # Commit & push via fonction centralisée
-    try:
-        us.commit_and_push_github()
-        st.info("Tous les fichiers parquets commités et poussés sur GitHub.")
-    except Exception as e:
-        st.error(f"Erreur lors du commit/push GitHub : {e}")
+    # --- Nettoyage du répertoire temporaire ---
+    shutil.rmtree(LOCAL_TEMP_DIR)
+
+    st.info("Tous les DataFrames ont été pushés sur GitHub avec file_last.txt mis à jour.")
 
     print("\n=== FIN DU TRAITEMENT ===\n")
 
