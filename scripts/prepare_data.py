@@ -17,7 +17,7 @@ from preprocess_stock import load_data, preprocess_data
 import utils_stock as us
 
 # Chemin absolu basé sur le script
-SCRIPT_DIR = Path(__file__).parent.resolve() / "scripts"
+SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_FILE = SCRIPT_DIR / "prepare_data.log"
 
 logging.basicConfig(
