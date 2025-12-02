@@ -442,7 +442,7 @@ def Analyse_stock():
     )
     #-------TEST-------
     # Chemin vers le fichier log généré par prepare_data.py
-    LOG_FILE = Path("./prepare_data.log")
+    LOG_FILE = Path(__file__).parent / "prepare_data.log"
 
     st.title("Logs du traitement des parquets")
 

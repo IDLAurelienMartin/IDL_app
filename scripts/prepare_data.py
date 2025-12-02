@@ -61,11 +61,11 @@ def prepare_stock_data():
 
     # 3) Sauvegarde Parquet dans GitHub local
     # --- Répertoire temporaire pour les fichiers parquet ---
-    LOCAL_TEMP_DIR = Path("./temp_cache")
+    LOCAL_TEMP_DIR = Path(__file__).parent / "temp_cache"
     LOCAL_TEMP_DIR.mkdir(exist_ok=True)
 
     #-------test----------
-    LOG_FILE = Path("./prepare_data.log")
+    LOG_FILE = Path(__file__).parent / "prepare_data.log"
     logging.basicConfig(
         filename=LOG_FILE,
         filemode="a",
