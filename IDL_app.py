@@ -452,7 +452,10 @@ def Analyse_stock():
 
     st.title("Analyse des écarts de stock")
 
-    #----- test------
+    #----------------------------------------------------
+    #---------------- test-------------------------------
+    #----------------------------------------------------
+    
     def debug_push():
         st.title("DEBUG PUSH GITHUB")
         branch = "main"            
@@ -469,6 +472,9 @@ def Analyse_stock():
         st.write("LOCAL_CACHE_DIR : ", local_files_1)
         st.write("DATA_IDL_CACHE : ", local_files_2)
         st.write("RENDER_CACHE_DIR: ", local_files_3)
+        st.write("PARQUET_FILE:", us.PARQUET_FILE)
+        st.write("Dossier existe ?", us.PARQUET_FILE.parent.exists())
+
 
         if not local_files_1:
             st.error("AUCUN fichier trouvé dans /opt/render/project/src/Cache !!!")
@@ -532,39 +538,6 @@ def Analyse_stock():
     
     debug_push()
     
-
-    if st.button("Lancer le test de fonction commit_and_push_github()"):
-        st.info("Création d’un fichier parquet de test…")
-
-        # 1) Création d'un fichier parquet de test
-        test_df = pd.DataFrame({
-            "col1": [1, 2, 3],
-            "col2": ["A", "B", "C"],
-            "ts": [datetime.now()] * 3
-        })
-
-        test_file = us.LOCAL_CACHE_DIR / "test_push.parquet"
-        test_df.to_parquet(test_file, index=False)
-
-        st.success(f"Fichier créé : {test_file}")
-
-        st.info("Lancement du commit_and_push_github()…")
-
-        # 2) Appel direct de ta fonction
-        results = us.commit_and_push_github()
-
-        # 3) Affichage détaillé des retours
-        st.subheader("Résultats détaillés du push :")
-        if not results:
-            st.error("Aucun résultat retourné (la fonction n'a peut-être pas été exécutée).")
-        else:
-            for file_name, status, text in results:
-                st.write(f"### Fichier : `{file_name}`")
-                st.write(f"**Status HTTP :** {status}")
-                st.write("**Réponse GitHub :**")
-                st.code(text[:2000])  # tronqué pour éviter les très longues réponses
-
-
     # ---------- Prétraiter df_mvt_stock une seule fois ----------
     if not df_mvt_stock.empty:
         if "df_mvt_stock_processed" not in st.session_state:
