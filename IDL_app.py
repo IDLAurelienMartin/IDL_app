@@ -441,12 +441,12 @@ def Analyse_stock():
         cwd=us.GIT_REPO_DIR
     )
     #-------TEST-------
-    BASE_DIR = Path(__file__).parent.resolve()
-    LOG_FILE = BASE_DIR / "prepare_data.log"
+    SCRIPT_DIR = Path(__file__).parent.resolve() / "scripts"
+    LOG_FILE = SCRIPT_DIR / "prepare_data.log"
 
     if st.button("Exécuter prepare_data.py"):
         # Lance le script
-        subprocess.run(["python3", str(BASE_DIR / "prepare_data.py")], check=False)
+        subprocess.run(["python3", str(SCRIPT_DIR / "prepare_data.py")], check=False)
         st.success("Script exécuté. Le log devrait maintenant exister.")
 
     # Affiche le log si présent
