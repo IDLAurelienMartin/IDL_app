@@ -40,7 +40,7 @@ def github_list_folder(folder_path: str):
     Retourne une liste de dictionnaires :
     [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
     """
-    url = us.RAW_BASE_CACHE + folder_path
+    url = us.RAW_BASE + folder_path
     r = requests.get(url)
     if r.status_code != 200:
         logging.error(f"Dossier introuvable sur GitHub : {url}")
@@ -70,7 +70,7 @@ def github_list_excel_files_recursive(folder_path: str):
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
     """Télécharge un Excel RAW depuis GitHub."""
-    url = us.RAW_BASE_CACHE + path
+    url = us.RAW_BASE + path
     try:
         r = requests.get(url)
         r.raise_for_status()
