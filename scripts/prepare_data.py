@@ -95,7 +95,7 @@ def prepare_stock_data():
             if sha:
                 data["sha"] = sha
 
-            r_put = requests.put(url, headers=HEADERS, json=data)
+            r_put = requests.put(url, headers=us.HEADERS, json=data)
 
             if r_put.status_code in [200, 201]:
                 logging.info(f"[OK] {filename} pushé sur GitHub")
