@@ -440,6 +440,20 @@ def Analyse_stock():
         ["git", "push", f"https://{us.GITHUB_TOKEN}@github.com/{us.GITHUB_OWNER}/{us.GITHUB_REPO}.git", us.GITHUB_BRANCH],
         cwd=us.GIT_REPO_DIR
     )
+    #-------TEST-------
+    # Chemin vers le fichier log généré par prepare_data.py
+    LOG_FILE = Path("./prepare_data.log")
+
+    st.title("Logs du traitement des parquets")
+
+    if LOG_FILE.exists():
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            log_content = f.read()
+
+        # Affiche le log dans un composant Streamlit
+        st.text_area("Contenu du log", value=log_content, height=500, max_chars=None, key="log_area")
+    else:
+        st.warning("Le fichier prepare_data.log n'existe pas encore. Exécutez le script prepare_data.py.")
 
     # ---------- harmonisation MGB_6 (vectorisée) ----------
     all_dfs = [
@@ -451,92 +465,6 @@ def Analyse_stock():
             df["MGB_6"] = df["MGB_6"].astype(str).str.replace(" ", "", regex=False).str.strip()
 
     st.title("Analyse des écarts de stock")
-
-    #----------------------------------------------------
-    #---------------- test-------------------------------
-    #----------------------------------------------------
-    
-    def debug_push():
-        st.title("DEBUG PUSH GITHUB")
-        branch = "main"            
-        
-        headers = us.HEADERS
-
-        # ----------------------------------------------------------
-        # 1) Vérifier que le dossier local contient bien des fichiers
-        # ----------------------------------------------------------
-        st.subheader("1) Contenu du cache local")
-        local_files_1 = list(us.LOCAL_CACHE_DIR.glob("*.*"))
-        local_files_2 = list(us.DATA_IDL_CACHE.glob("*.*"))
-        local_files_3 = list(us.RENDER_CACHE_DIR.glob("*.*"))
-        st.write("LOCAL_CACHE_DIR : ", local_files_1)
-        st.write("DATA_IDL_CACHE : ", local_files_2)
-        st.write("RENDER_CACHE_DIR: ", local_files_3)
-        st.write("PARQUET_FILE:", us.PARQUET_FILE)
-        st.write("Dossier existe ?", us.PARQUET_FILE.parent.exists())
-
-
-        if not local_files_1:
-            st.error("AUCUN fichier trouvé dans /opt/render/project/src/Cache !!!")
-        if not local_files_2:
-            st.error("AUCUN fichier trouvé dans /opt/render/project/src/Data_IDL/Cache !!!")
-        if not local_files_3:
-            st.error("AUCUN fichier trouvé dans /opt/render/project/src/render_cache !!!")
-        # ----------------------------------------------------------
-        # 2) Vérifier que le token fonctionne
-        # ----------------------------------------------------------
-        st.subheader("2) Vérification du token GitHub")
-
-        check = requests.get("https://api.github.com/user", headers=headers)
-        st.write("Status:", check.status_code)
-        st.write("Réponse:", check.json())
-
-        if check.status_code != 200:
-            st.error("TOKEN INVALIDE → GitHub refuse l’accès")
-            return
-
-        st.success("Token valide.")
-
-        # ----------------------------------------------------------
-        # 3) Lire les fichiers présents dans GitHub
-        # ----------------------------------------------------------
-        st.subheader("3) Fichiers visibles côté GitHub")
-
-        gh_list = requests.get(us.GITHUB_API_BASE, headers=headers)
-        st.write("Status:", gh_list.status_code)
-        st.write("Réponse:", gh_list.json())
-
-        if gh_list.status_code != 200:
-            st.error("Impossible de lister les fichiers GitHub.")
-            return
-
-        # ----------------------------------------------------------
-        # 4) Test d'upload FORCÉ d’un fichier test
-        # ----------------------------------------------------------
-        st.subheader("4) TEST UPLOAD FORCÉ")
-
-        test_file = us.LOCAL_CACHE_DIR / "debug_test_upload.txt"
-        test_file.write_text("HELLO " + str(datetime.utcnow()))
-
-        encoded = base64.b64encode(test_file.read_bytes()).decode()
-        url = f"{us.GITHUB_API_BASE}/debug_test_upload.txt"
-
-        r = requests.put(url, headers=headers, json={
-            "message": "DEBUG UPLOAD",
-            "content": encoded,
-            "branch": branch
-        })
-
-        st.write("Status:", r.status_code)
-        st.write("Réponse:", r.text)
-
-        if r.status_code in (200, 201):
-            st.success("UPLOAD OK → ton token et ton repo fonctionnent")
-        else:
-            st.error("UPLOAD REFUSÉ → erreur GitHub ci-dessus.")
-            return
-    
-    debug_push()
     
     # ---------- Prétraiter df_mvt_stock une seule fois ----------
     if not df_mvt_stock.empty:

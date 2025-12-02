@@ -9,6 +9,7 @@ import shutil
 import streamlit as st
 import requests
 import base64
+import logging
 
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
@@ -63,27 +64,45 @@ def prepare_stock_data():
     LOCAL_TEMP_DIR = Path("./temp_cache")
     LOCAL_TEMP_DIR.mkdir(exist_ok=True)
 
+    #-------test----------
+    LOG_FILE = Path("./prepare_data.log")
+    logging.basicConfig(
+        filename=LOG_FILE,
+        filemode="a",
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
     # --- Fonction pour push un fichier sur GitHub ---
     def push_file_to_github(file_path: Path, filename: str):
         """Push un fichier directement dans le dossier Cache du repo GitHub."""
         url = f"{us.GITHUB_API_BASE}/{filename}"
-        with open(file_path, "rb") as f:
-            content = f.read()
-        b64_content = base64.b64encode(content).decode()
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+            b64_content = base64.b64encode(content).decode()
 
-        # Vérifie si le fichier existe pour récupérer le SHA
-        r = requests.get(url, headers={"Authorization": f"token {us.GITHUB_TOKEN}"})
-        sha = r.json().get("sha") if r.status_code == 200 else None
+            # Vérifie si le fichier existe pour récupérer le SHA
+            r = requests.get(url, headers=us.HEADERS)
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+                logging.info(f"{filename} existe déjà sur GitHub, SHA récupéré.")
+            else:
+                sha = None
+                logging.info(f"{filename} n'existe pas encore sur GitHub, création d'un nouveau fichier.")
 
-        data = {"message": f"Update {filename}", "content": b64_content, "branch": "main"}
-        if sha:
-            data["sha"] = sha
+            data = {"message": f"Update {filename}", "content": b64_content, "branch": "main"}
+            if sha:
+                data["sha"] = sha
 
-        r = requests.put(url, headers={"Authorization": f"token {us.GITHUB_TOKEN}"}, json=data)
-        if r.status_code in [200, 201]:
-            st.success(f"[OK] {filename} pushé sur GitHub")
-        else:
-            st.error(f"[ERREUR] {filename} non pushé : {r.status_code} {r.text}")
+            r_put = requests.put(url, headers=HEADERS, json=data)
+
+            if r_put.status_code in [200, 201]:
+                logging.info(f"[OK] {filename} pushé sur GitHub")
+            else:
+                logging.error(f"[ERREUR] {filename} non pushé : {r_put.status_code} - {r_put.text}")
+        except Exception as e:
+            logging.exception(f"[EXCEPTION] Erreur lors du push de {filename} : {e}")
 
     # --- DataFrames à push ---
     datasets = {
@@ -106,14 +125,15 @@ def prepare_stock_data():
     # --- Mettre à jour file_last.txt sur GitHub ---
     file_last_path = LOCAL_TEMP_DIR / "file_last.txt"
     file_last_path.write_text("ecart_stock_last.parquet", encoding="utf-8")
+    logging.info(f"Fichier temporaire créé : {temp_file}")
     push_file_to_github(file_last_path, "file_last.txt")
 
     # --- Nettoyage du répertoire temporaire ---
     shutil.rmtree(LOCAL_TEMP_DIR)
 
-    st.info("Tous les DataFrames ont été pushés sur GitHub avec file_last.txt mis à jour.")
+    logging.info("Tous les DataFrames ont été pushés sur GitHub avec file_last.txt mis à jour.")
 
-    print("\n=== FIN DU TRAITEMENT ===\n")
+    logging.info("\n=== FIN DU TRAITEMENT ===\n")
 
 # =====================================================
 # Exécution principale
