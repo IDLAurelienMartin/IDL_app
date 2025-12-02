@@ -441,9 +441,17 @@ def Analyse_stock():
         cwd=us.GIT_REPO_DIR
     )
     #-------TEST-------
-    log_path = Path(__file__).parent / "prepare_data.log"
-    if log_path.exists():
-        st.text(log_path.read_text())
+    BASE_DIR = Path(__file__).parent.resolve()
+    LOG_FILE = BASE_DIR / "prepare_data.log"
+
+    if st.button("Exécuter prepare_data.py"):
+        # Lance le script
+        subprocess.run(["python3", str(BASE_DIR / "prepare_data.py")], check=False)
+        st.success("Script exécuté. Le log devrait maintenant exister.")
+
+    # Affiche le log si présent
+    if LOG_FILE.exists():
+        st.text(LOG_FILE.read_text())
     else:
         st.warning("Le fichier de log n'existe pas encore.")
 

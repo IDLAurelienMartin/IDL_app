@@ -16,11 +16,21 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
 import utils_stock as us
 
+# Chemin absolu basé sur le script
+LOG_FILE = us.BASE_DIR / "prepare_data.log"
+
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode="a",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
 # =====================================================
 # Pipeline complet : GitHub → Preprocess → Parquet → GitHub
 # =====================================================
 def prepare_stock_data():
-    st.info("\n=== SCRIPT prepare_stock_data ===")
+    logging.info("\n=== SCRIPT prepare_stock_data ===")
 
     # 1) Chargement depuis GitHub
     (
@@ -65,15 +75,6 @@ def prepare_stock_data():
     LOCAL_TEMP_DIR.mkdir(exist_ok=True)
 
     #-------test----------
-    # Chemin absolu basé sur le script
-    LOG_FILE = us.BASE_DIR / "prepare_data.log"
-
-    logging.basicConfig(
-        filename=LOG_FILE,
-        filemode="a",
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
 
     # --- Fonction pour push un fichier sur GitHub ---
     def push_file_to_github(file_path: Path, filename: str):

@@ -13,9 +13,21 @@ import requests
 import shutil
 from io import BytesIO
 import numpy as np
+import base64
+import logging
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
 import utils_stock as us
+
+# Chemin absolu basé sur le script
+LOG_FILE = us.BASE_DIR / "prepare_data.log"
+
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode="a",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # ============================================================
 # === UTILITAIRES GITHUB
@@ -30,7 +42,7 @@ def github_list_folder(folder_path: str):
     url = us.API_BASE + folder_path
     r = requests.get(url)
     if r.status_code != 200:
-        st.error(f"Dossier introuvable sur GitHub : {url}")
+        logging.error(f"Dossier introuvable sur GitHub : {url}")
         return []
     return r.json()
 
@@ -63,7 +75,7 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
         r.raise_for_status()
         return pd.read_excel(BytesIO(r.content))
     except:
-        st.error(f"Échec lecture : {url}")
+        logging.error(f"Échec lecture : {url}")
         return pd.DataFrame()
 
 
@@ -98,9 +110,9 @@ def load_data():
     INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
     try:
         date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
-        st.info("Date interne inventaire :", date_ref)
+        logging.info("Date interne inventaire :", date_ref)
     except Exception as e:
-        st.error("Erreur lecture métadonnées inventaire -> fallback now()", e)
+        logging.error("Erreur lecture métadonnées inventaire -> fallback now()", e)
         date_ref = datetime.now()
 
     df_inventaire = read_excel_from_github(INVENTORY_PATH)
@@ -131,7 +143,7 @@ def load_data():
             date_creation = get_excel_creation_date_from_github(f)
             files_with_dates.append((f, date_creation))
         except Exception as e:
-            st.error(f"Impossible de lire la date de {f} :", e)
+            logging.error(f"Impossible de lire la date de {f} :", e)
 
     # Trier par date de création croissante
     files_with_dates.sort(key=lambda x: x[1])
@@ -161,14 +173,14 @@ def load_data():
     # ----------------------------------------
     # Synthèse
     # ----------------------------------------
-    print("\n=== SYNTHÈSE GITHUB ===")
-    print("Mvt Stock :", len(df_mvt_stock))
-    print("Réception :", len(df_reception))
-    print("Sorties   :", len(df_sorties))
-    print("Écart prev:", len(df_ecart_stock_prev))
-    print("Écart last:", len(df_ecart_stock_last))
-    print("Articles €:", len(df_article_euros))
-    print("Inventaire:", len(df_inventaire))
+    logging.info("\n=== SYNTHÈSE GITHUB ===")
+    logging.info("Mvt Stock :", len(df_mvt_stock))
+    logging.info("Réception :", len(df_reception))
+    logging.info("Sorties   :", len(df_sorties))
+    logging.info("Écart prev:", len(df_ecart_stock_prev))
+    logging.info("Écart last:", len(df_ecart_stock_last))
+    logging.info("Articles €:", len(df_article_euros))
+    logging.info("Inventaire:", len(df_inventaire))
 
     return (
         df_mvt_stock,
@@ -421,7 +433,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
-            st.info("df_article_euros vide ou non trouvé.")
+            logging.info("df_article_euros vide ou non trouvé.")
         else:
             # Toujours travailler en str pour éviter surprises
             df_article_euros = df_article_euros.astype(str)
@@ -488,7 +500,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                         ref_col = 'ref'
                         break
                 if not ref_col: # toujours pas trouvé
-                    st.error("Colonne référence non trouvée dans df_article_euros.")
+                    logging.error("Colonne référence non trouvée dans df_article_euros.")
 
             # 7) Convertir Prix_Unitaire en float (retirer '€', remplacer virgule par point)
             if 'Prix_Unitaire' in df_article_euros.columns:
@@ -499,7 +511,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 s = s.str.replace(',', '.', regex=False)
                 df_article_euros['Prix_Unitaire'] = pd.to_numeric(s, errors='coerce')
             else:
-                st.error("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
+                logging.error("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
 
         #--- ETAT STOCK ---
         if 'Ref Metro' not in df_etat_stock.columns and 'SubSys' in df_etat_stock.columns:
@@ -577,7 +589,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             df_target[value_col] = df_target[quantity_col] * df_target[price_col]
 
             if display_in_streamlit:
-                st.dataframe(df_target.style.format({price_col: "{:.2f}", value_col: "{:.2f}"}))
+                logging.dataframe(df_target.style.format({price_col: "{:.2f}", value_col: "{:.2f}"}))
 
             return df_target
         def remove_duplicate_columns(df):
@@ -668,23 +680,23 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                             if n_to_fill:
                                 df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
                         else:
-                            print(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
+                            logging.info(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
 
                     # --- supprimer toutes les colonnes finissant par _old (robuste) ---
                     old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
                     if old_cols:
-                        st.info(f"Suppression des colonnes temporaires : {old_cols}")
+                        logging.info(f"Suppression des colonnes temporaires : {old_cols}")
                         df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
                     else:
-                        st.error("Aucune colonne *_old à supprimer.")
+                        logging.error("Aucune colonne *_old à supprimer.")
 
                 else:
-                    st.error("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
+                    logging.error("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
 
             except Exception as e:
-                st.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
+                logging.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
         else:
-            st.info("Aucun ancien parquet trouvé, création initiale du fichier.")
+            logging.info("Aucun ancien parquet trouvé, création initiale du fichier.")
 
         def remove_full_duplicate_rows(df):
             """

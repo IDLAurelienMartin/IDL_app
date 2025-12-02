@@ -9,6 +9,7 @@ import streamlit as st
 from PIL import ImageFont
 import base64
 import shutil
+import logging
 
 # ===================== DOSSIERS =====================
 GIT_REPO_DIR = Path("/opt/render/project/src")  
@@ -42,6 +43,18 @@ HEADERS = {
 
 # ===================== POLICE =====================
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
+
+# Chemin absolu basé sur le script
+LOG_FILE = us.BASE_DIR / "prepare_data.log"
+
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode="a",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+
 
 # =====================================================
 # Fonctions utilitaires
@@ -112,28 +125,28 @@ def load_parquet(file_name):
         r.raise_for_status()
         return pd.read_parquet(BytesIO(r.content))
     except Exception as e:
-        st.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
+        logging.error(f"Impossible de charger {file_name} depuis GitHub : {e}")
         return pd.DataFrame()
 
 def save_parquet_local(df, file_name, copy_to_render=True):
     """Sauvegarde dans le cache local et copie dans Render si demandé."""
     local_path = LOCAL_CACHE_DIR / file_name
     df.to_parquet(local_path, index=False)
-    st.success(f"{file_name} sauvegardé dans Cache/")
+    logging.success(f"{file_name} sauvegardé dans Cache/")
 
     if copy_to_render and RENDER_CACHE_DIR.exists():
         shutil.copy(local_path, RENDER_CACHE_DIR)
-        st.info(f"{file_name} copié dans le cache Render")
+        logging.info(f"{file_name} copié dans le cache Render")
 
 def commit_and_push_github():
     """Push automatique sur GitHub via API."""
     if not GITHUB_TOKEN:
-        st.warning("GITHUB_TOKEN non défini, push GitHub ignoré.")
+        logging.warning("GITHUB_TOKEN non défini, push GitHub ignoré.")
         return
 
     files_to_push = list(LOCAL_CACHE_DIR.glob("*.*"))
     if not files_to_push:
-        st.info("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
+        logging.info("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
         return
 
     for file_path in files_to_push:
@@ -156,9 +169,9 @@ def commit_and_push_github():
 
         put_r = requests.put(url, headers=HEADERS, json=data)
         if put_r.status_code in (200, 201):
-            st.success(f"{file_name} mis à jour sur GitHub")
+            logging.success(f"{file_name} mis à jour sur GitHub")
         else:
-            st.error(f"Erreur push {file_name}: {put_r.status_code} → {put_r.text}")
+            logging.error(f"Erreur push {file_name}: {put_r.status_code} → {put_r.text}")
             raise Exception(f"Push failed for {file_name}")
 
 def load_font(font_size: int):
@@ -166,5 +179,5 @@ def load_font(font_size: int):
     try:
         return ImageFont.truetype(str(FONT_PATH), font_size)
     except Exception as e:
-        st.error(f"Erreur chargement police : {e}")
+        logging.error(f"Erreur chargement police : {e}")
         return ImageFont.load_default()
