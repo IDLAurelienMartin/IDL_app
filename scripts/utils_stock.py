@@ -35,7 +35,8 @@ GITHUB_REPO = "Data_IDL"
 GITHUB_BRANCH = "main"
 GIT_REPO_URL = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
 GITHUB_API_BASE = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/Cache"
-RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
+RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
+RAW_BASE_CACHE = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/Cache/"
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
     "Accept": "application/vnd.github.v3+json",
@@ -120,7 +121,7 @@ def load_parquet(file_name):
         return pd.read_parquet(local_path)
 
     # GitHub RAW
-    github_url = RAW_BASE + file_name
+    github_url = RAW_BASE_CACHE + file_name
     try:
         r = requests.get(github_url)
         r.raise_for_status()
