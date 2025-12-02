@@ -441,19 +441,11 @@ def Analyse_stock():
         cwd=us.GIT_REPO_DIR
     )
     #-------TEST-------
-    # Chemin vers le fichier log généré par prepare_data.py
-    LOG_FILE = Path(__file__).parent / "prepare_data.log"
-
-    st.title("Logs du traitement des parquets")
-
-    if LOG_FILE.exists():
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            log_content = f.read()
-
-        # Affiche le log dans un composant Streamlit
-        st.text_area("Contenu du log", value=log_content, height=500, max_chars=None, key="log_area")
+    log_path = Path(__file__).parent / "prepare_data.log"
+    if log_path.exists():
+        st.text(log_path.read_text())
     else:
-        st.warning("Le fichier prepare_data.log n'existe pas encore. Exécutez le script prepare_data.py.")
+        st.warning("Le fichier de log n'existe pas encore.")
 
     # ---------- harmonisation MGB_6 (vectorisée) ----------
     all_dfs = [

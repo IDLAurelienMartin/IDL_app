@@ -65,7 +65,9 @@ def prepare_stock_data():
     LOCAL_TEMP_DIR.mkdir(exist_ok=True)
 
     #-------test----------
-    LOG_FILE = Path(__file__).parent / "prepare_data.log"
+    # Chemin absolu basé sur le script
+    LOG_FILE = us.BASE_DIR / "prepare_data.log"
+
     logging.basicConfig(
         filename=LOG_FILE,
         filemode="a",
