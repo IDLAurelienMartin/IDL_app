@@ -45,7 +45,7 @@ HEADERS = {
 FONT_PATH = Path(__file__).parent / "fonts" / "DejaVuSans-Bold.ttf"
 
 # Chemin absolu basé sur le script
-LOG_FILE = us.BASE_DIR / "prepare_data.log"
+LOG_FILE = BASE_DIR / "prepare_data.log"
 
 logging.basicConfig(
     filename=LOG_FILE,
