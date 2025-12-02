@@ -123,6 +123,7 @@ def prepare_stock_data():
     # --- Push des fichiers parquet ---
     for name, df in datasets.items():
         temp_file = LOCAL_TEMP_DIR / f"{name}.parquet"
+        logging.info(f"Création du fichier temporaire : {temp_file}")
         df.to_parquet(temp_file, index=False)
         push_file_to_github(temp_file, f"{name}.parquet")
 
