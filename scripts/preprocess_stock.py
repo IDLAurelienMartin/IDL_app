@@ -34,39 +34,42 @@ logging.basicConfig(
 # === UTILITAIRES GITHUB
 # ============================================================
 
-def github_list_folder(folder_path: str):
+def github_list_excel_files_recursive(folder_path: str) -> list[str]:
     """
     Liste le contenu d’un dossier GitHub via l’API.
     Retourne une liste de dictionnaires :
     [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
     """
-    url = us.GITHUB_API_BASE + folder_path
-    r = requests.get(url)
-    if r.status_code != 200:
-        logging.error(f"Dossier introuvable sur GitHub : {url}")
+    logging.info(f"Accès au dossier GitHub : {folder_path}")
+    url = f"{us.GITHUB_API_BASE}{folder_path}"
+    try:
+        r = requests.get(url, headers=us.HEADERS)
+        r.raise_for_status()
+    except requests.HTTPError as e:
+        logging.error(f"Dossier introuvable sur GitHub : {url} ({e})")
         return []
-    return r.json()
+    except Exception as e:
+        logging.exception(f"Erreur inattendue lors de l'accès à {url} : {e}")
+        return []
 
+    items = r.json()
+    files = []
 
-def github_list_excel_files_recursive(folder_path: str):
-    """
-    Liste tous les fichiers .xlsx dans un dossier + sous-dossiers GitHub.
-    """
-    results = []
-    stack = [folder_path]
+    for item in items:
+        item_type = item.get("type")
+        item_name = item.get("name")
+        if item_type == "file" and item_name.endswith(".xlsx"):
+            files.append(item["download_url"])
+            logging.info(f"Fichier trouvé : {folder_path}/{item_name}")
+        elif item_type == "dir":
+            logging.info(f"Sous-dossier détecté : {folder_path}/{item_name}, exploration récursive...")
+            files_in_subdir = github_list_excel_files_recursive(f"{folder_path}/{item_name}")
+            files.extend(files_in_subdir)
+        else:
+            logging.debug(f"Élément ignoré : {folder_path}/{item_name} (type={item_type})")
 
-    while stack:
-        current = stack.pop()
-        items = github_list_folder(current)
-
-        for it in items:
-            if it["type"] == "dir":
-                stack.append(it["path"])
-            elif it["type"] == "file" and it["name"].endswith(".xlsx"):
-                results.append(it["path"])
-
-    return results
-
+    logging.info(f"Total fichiers Excel trouvés dans {folder_path} : {len(files)}")
+    return files
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
     """Télécharge un Excel RAW depuis GitHub."""
