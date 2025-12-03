@@ -60,7 +60,6 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
         item_name = item.get("name")
         if item_type == "file" and item_name.endswith(".xlsx"):
             files.append(item["download_url"])
-            logging.info(f"Fichier trouvé : {folder_path}/{item_name}")
         elif item_type == "dir":
             logging.info(f"Sous-dossier détecté : {folder_path}/{item_name}, exploration récursive...")
             files_in_subdir = github_list_excel_files_recursive(f"{folder_path}/{item_name}")
@@ -85,17 +84,33 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
 
 def get_excel_creation_date_from_github(path: str) -> datetime:
     """Récupère la date interne d’un Excel depuis GitHub."""
-    url = path
-    r = requests.get(url)
-    r.raise_for_status()
+    logging.info(f"Tentative de récupération de l'Excel depuis GitHub : {path}")
+    try:
+        r = requests.get(path)
+        r.raise_for_status()
+        logging.info(f"Fichier téléchargé avec succès : {path} (status_code={r.status_code})")
+    except requests.HTTPError as e:
+        logging.error(f"Erreur HTTP lors du téléchargement de {path} : {e}")
+        raise
+    except Exception as e:
+        logging.exception(f"Erreur inattendue lors du téléchargement de {path} : {e}")
+        raise
 
-    wb = load_workbook(filename=BytesIO(r.content), read_only=True)
-    props = wb.properties
-    wb.close()
+    try:
+        wb = load_workbook(filename=BytesIO(r.content), read_only=True)
+        logging.info(f"Workbook chargé avec succès : {path}")
+        props = wb.properties
+        wb.close()
+    except Exception as e:
+        logging.exception(f"Erreur lors de l'ouverture du workbook {path} : {e}")
+        raise
 
     if props.created:
+        logging.info(f"Date interne Excel trouvée : {props.created}")
         return props.created
-    raise ValueError("Métadonnée Excel 'created' introuvable.")
+    else:
+        logging.error(f"Métadonnée Excel 'created' introuvable pour {path}")
+        raise ValueError("Métadonnée Excel 'created' introuvable.")
 
 
 # ============================================================
@@ -125,9 +140,32 @@ def load_data():
     # Fonction pour charger tous les fichiers Excel d'un dossier GitHub
     # ----------------------------------------
     def load_folder(folder):
-        files = github_list_excel_files_recursive(folder)
-        dfs = [read_excel_from_github(f) for f in files]
-        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        logging.info(f"Tentative de chargement du dossier GitHub : {folder}")
+        
+        try:
+            files = github_list_excel_files_recursive(folder)
+            logging.info(f"{len(files)} fichiers Excel trouvés dans {folder}")
+        except Exception as e:
+            logging.exception(f"Erreur lors de la liste des fichiers dans {folder} : {e}")
+            return pd.DataFrame()
+
+        dfs = []
+        for f in files:
+            try:
+                logging.info(f"Téléchargement et lecture du fichier : {f}")
+                df = read_excel_from_github(f)
+                dfs.append(df)
+                logging.info(f"Fichier lu avec succès : {f} (lignes={len(df)})")
+            except Exception as e:
+                logging.exception(f"Erreur lors de la lecture du fichier {f} : {e}")
+
+        if dfs:
+            logging.info(f"Concaténation de {len(dfs)} DataFrames pour le dossier {folder}")
+            return pd.concat(dfs, ignore_index=True)
+        else:
+            logging.warning(f"Aucun DataFrame chargé pour le dossier {folder}")
+            return pd.DataFrame()
+
 
     # Chargement des données
     df_mvt_stock = load_folder("Mvt_stock")
@@ -153,6 +191,7 @@ def load_data():
     files_with_dates.sort(key=lambda x: x[1])
 
     if len(files_with_dates) < 2:
+        logging.error("Pas assez de fichiers d’écart stock avec date interne.")
         raise FileNotFoundError("Pas assez de fichiers d’écart stock avec date interne.")
 
     # Déterminer les fichiers avant-dernier et dernier
