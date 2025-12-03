@@ -73,7 +73,7 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
     """Télécharge un Excel RAW depuis GitHub."""
-    url = us.RAW_BASE + path
+    url = path
     try:
         r = requests.get(url)
         r.raise_for_status()
@@ -85,7 +85,7 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
 
 def get_excel_creation_date_from_github(path: str) -> datetime:
     """Récupère la date interne d’un Excel depuis GitHub."""
-    url = us.RAW_BASE + path
+    url = path
     r = requests.get(url)
     r.raise_for_status()
 
