@@ -2,6 +2,7 @@
 import subprocess
 import sys
 from pathlib import Path
+import time
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
 import utils_stock as us
@@ -56,32 +57,38 @@ def ensure_cache_cloned():
     else:
         logging.info("Cache local déjà présent.")
 
-def lancer_app(placeholder):
+def lancer_app():
     """Exécute les scripts de préparation et met à jour l'UI"""
     try:
         ensure_cache_cloned()
-
         # Liste des scripts de préparation
         scripts = ["preprocess_stock.py", "prepare_data.py"]
         total = len(scripts)
-
         for idx, script in enumerate(scripts, start=1):
-            placeholder.text(f"Exécution de {script} ({idx}/{total})...")
+            st.session_state.progress = f"Étape {idx}/{total} : Exécution de {script}..."
             run_script(script)
 
-        placeholder.success("Préparation terminée !")
+        st.session_state.progress = "✅ Préparation terminée !"
         logging.info("Préparation des données terminée avec succès.")
     except Exception as e:
         logging.exception("Erreur pendant la préparation des données")
-        placeholder.error(f"Erreur : {str(e)}")
+        st.session_state.progress = f"❌ Erreur : {str(e)}"
 
+# --- Streamlit UI ---
 # --- Streamlit UI ---
 if __name__ == "__main__":
     st.set_page_config(page_title="IDL App", layout="wide")
     st.title("IDL App")
 
-    placeholder = st.empty()  # zone à mettre à jour avec l’avancement
-    placeholder.text("Préparation des données en cours... Merci de patienter.")
+    # Initialise l'état si nécessaire
+    if "progress" not in st.session_state:
+        st.session_state.progress = "Préparation des données en cours..."
+    if "thread_started" not in st.session_state:
+        threading.Thread(target=lancer_app, daemon=True).start()
+        st.session_state.thread_started = True
 
-    # Lancer la préparation en arrière-plan
-    threading.Thread(target=lancer_app, args=(placeholder,), daemon=True).start()
+    # Affiche l'avancement en continu
+    placeholder = st.empty()
+    while True:
+        placeholder.text(st.session_state.progress)
+        time.sleep(1)
