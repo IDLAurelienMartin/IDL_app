@@ -42,16 +42,18 @@ def ensure_cache_cloned():
     else:
         logging.info("Cache local déjà présent.")
 
-# --- Interface Streamlit ---
-st.set_page_config(page_title="IDL App", layout="wide")
-st.title("IDL App")
-st.write("Préparation des données en cours... Merci de patienter.")
+if __name__ == "__main__":
+    # --- Interface Streamlit ---
+    st.set_page_config(page_title="IDL App", layout="wide")
+    st.title("IDL App")
+    st.write("Préparation des données en cours... Merci de patienter.")
 
-# --- Exécution en arrière-plan ---
-def prepare_data():
-    ensure_cache_cloned()
-    run_script("preprocess_stock.py")
-    run_script("prepare_data.py")
-    st.success("Préparation terminée !")
+    # --- Exécution en arrière-plan ---
+    def prepare_data():
+        ensure_cache_cloned()
+        run_script("preprocess_stock.py")
+        run_script("prepare_data.py")
+        st.success("Préparation terminée !")
 
-threading.Thread(target=prepare_data).start()
+    threading.Thread(target=prepare_data).start()
+
