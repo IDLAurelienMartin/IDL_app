@@ -2,13 +2,10 @@
 import subprocess
 import sys
 from pathlib import Path
-import time
 # Import local
 sys.path.append(str(Path(__file__).resolve().parent))
 import utils_stock as us
-import streamlit as st
 import logging
-import threading
 
 # Dossier de base du projet
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,9 +25,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-
-
-
 def run_script(script_name):
     """Exécute un script Python et affiche le résultat."""
     script_path = BASE_DIR / script_name
@@ -47,7 +41,7 @@ def run_script(script_name):
 def ensure_cache_cloned():
     """Clone le dépôt GitHub si le cache n'existe pas localement."""
     if not CACHE_DIR.exists():
-        logging.error("Cache local introuvable. Clonage depuis GitHub...")
+        logging.error("🌀 Cache local introuvable. Clonage depuis GitHub...")
         result = subprocess.run(["git", "clone", us.GITHUB_REPO, str(CACHE_DIR)], capture_output=True, text=True)
         if result.returncode != 0:
             logging.error("Erreur lors du clonage du dépôt :")
@@ -57,38 +51,18 @@ def ensure_cache_cloned():
     else:
         logging.info("Cache local déjà présent.")
 
-def lancer_app():
-    """Exécute les scripts de préparation et met à jour l'UI"""
-    try:
-        ensure_cache_cloned()
-        # Liste des scripts de préparation
-        scripts = ["preprocess_stock.py", "prepare_data.py"]
-        total = len(scripts)
-        for idx, script in enumerate(scripts, start=1):
-            st.session_state.progress = f"Étape {idx}/{total} : Exécution de {script}..."
-            run_script(script)
-
-        st.session_state.progress = "✅ Préparation terminée !"
-        logging.info("Préparation des données terminée avec succès.")
-    except Exception as e:
-        logging.exception("Erreur pendant la préparation des données")
-        st.session_state.progress = f"❌ Erreur : {str(e)}"
-
-# --- Streamlit UI ---
-# --- Streamlit UI ---
 if __name__ == "__main__":
-    st.set_page_config(page_title="IDL App", layout="wide")
-    st.title("IDL App")
+    ensure_cache_cloned()
 
-    # Initialise l'état si nécessaire
-    if "progress" not in st.session_state:
-        st.session_state.progress = "Préparation des données en cours..."
-    if "thread_started" not in st.session_state:
-        threading.Thread(target=lancer_app, daemon=True).start()
-        st.session_state.thread_started = True
+    # Exécution des scripts de préparation
+    run_script("preprocess_stock.py")
+    run_script("prepare_data.py")
 
-    # Affiche l'avancement en continu
-    placeholder = st.empty()
-    while True:
-        placeholder.text(st.session_state.progress)
-        time.sleep(1)
+    # Lancement de l’application Streamlit
+    streamlit_app = BASE_DIR.parent / "IDL_app.py"
+    if streamlit_app.exists():
+        logging.info("\nLancement de l'application Streamlit...")
+        subprocess.run([PYTHON, "-m", "streamlit", "run", str(streamlit_app)])
+    else:
+        logging.error(f"Application Streamlit introuvable : {streamlit_app}")
+
