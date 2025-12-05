@@ -62,8 +62,7 @@ if __name__ == "__main__":
     # Lancement de l’application Streamlit
     streamlit_app = BASE_DIR.parent / "IDL_app.py"
     if streamlit_app.exists():
-        logging.info("\nLancement de l'application Streamlit...")
-        subprocess.run([PYTHON, "-m", "streamlit", "run", str(BASE_DIR.parent / "IDL_app.py")])
+        subprocess.run([PYTHON, "-m", "streamlit", "run", str(streamlit_app)])
     else:
         logging.error(f"Application Streamlit introuvable : {streamlit_app}")
 
