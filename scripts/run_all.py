@@ -57,12 +57,13 @@ if __name__ == "__main__":
     # Exécution des scripts de préparation
     run_script("preprocess_stock.py")
     run_script("prepare_data.py")
+    run_script("utils_stock.py") 
 
     # Lancement de l’application Streamlit
     streamlit_app = BASE_DIR.parent / "IDL_app.py"
     if streamlit_app.exists():
         logging.info("\nLancement de l'application Streamlit...")
-        subprocess.run([PYTHON, "-m", "streamlit", "run", str(streamlit_app)])
+        subprocess.run([PYTHON, "-m", "streamlit", "run", str(BASE_DIR.parent / "IDL_app.py")])
     else:
         logging.error(f"Application Streamlit introuvable : {streamlit_app}")
 
