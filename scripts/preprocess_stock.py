@@ -40,7 +40,7 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
     Retourne une liste de dictionnaires :
     [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
     """
-    logging.info(f"Accès au dossier GitHub : {folder_path}")
+
     url = f"{us.GITHUB_API_BASE}{folder_path}"
     try:
         r = requests.get(url, headers=us.HEADERS)
@@ -61,13 +61,11 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
         if item_type == "file" and item_name.endswith(".xlsx"):
             files.append(item["download_url"])
         elif item_type == "dir":
-            logging.info(f"Sous-dossier détecté : {folder_path}/{item_name}, exploration récursive...")
             files_in_subdir = github_list_excel_files_recursive(f"{folder_path}/{item_name}")
             files.extend(files_in_subdir)
         else:
             logging.debug(f"Élément ignoré : {folder_path}/{item_name} (type={item_type})")
 
-    logging.info(f"Total fichiers Excel trouvés dans {folder_path} : {len(files)}")
     return files
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
@@ -84,11 +82,9 @@ def read_excel_from_github(path: str) -> pd.DataFrame:
 
 def get_excel_creation_date_from_github(path: str) -> datetime:
     """Récupère la date interne d’un Excel depuis GitHub."""
-    logging.info(f"Tentative de récupération de l'Excel depuis GitHub : {path}")
     try:
         r = requests.get(path)
         r.raise_for_status()
-        logging.info(f"Fichier téléchargé avec succès : {path} (status_code={r.status_code})")
     except requests.HTTPError as e:
         logging.error(f"Erreur HTTP lors du téléchargement de {path} : {e}")
         raise
@@ -98,7 +94,6 @@ def get_excel_creation_date_from_github(path: str) -> datetime:
 
     try:
         wb = load_workbook(filename=BytesIO(r.content), read_only=True)
-        logging.info(f"Workbook chargé avec succès : {path}")
         props = wb.properties
         wb.close()
     except Exception as e:
@@ -106,7 +101,6 @@ def get_excel_creation_date_from_github(path: str) -> datetime:
         raise
 
     if props.created:
-        logging.info(f"Date interne Excel trouvée : {props.created}")
         return props.created
     else:
         logging.error(f"Métadonnée Excel 'created' introuvable pour {path}")
@@ -144,7 +138,6 @@ def load_data():
         
         try:
             files = github_list_excel_files_recursive(folder)
-            logging.info(f"{len(files)} fichiers Excel trouvés dans {folder}")
         except Exception as e:
             logging.exception(f"Erreur lors de la liste des fichiers dans {folder} : {e}")
             return pd.DataFrame()
@@ -152,15 +145,12 @@ def load_data():
         dfs = []
         for f in files:
             try:
-                logging.info(f"Téléchargement et lecture du fichier : {f}")
                 df = read_excel_from_github(f)
                 dfs.append(df)
-                logging.info(f"Fichier lu avec succès : {f} (lignes={len(df)})")
             except Exception as e:
                 logging.exception(f"Erreur lors de la lecture du fichier {f} : {e}")
 
         if dfs:
-            logging.info(f"Concaténation de {len(dfs)} DataFrames pour le dossier {folder}")
             return pd.concat(dfs, ignore_index=True)
         else:
             logging.warning(f"Aucun DataFrame chargé pour le dossier {folder}")
@@ -476,7 +466,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
-            logging.info("df_article_euros vide ou non trouvé.")
+            logging.error("df_article_euros vide ou non trouvé.")
         else:
             # Toujours travailler en str pour éviter surprises
             df_article_euros = df_article_euros.astype(str)
@@ -723,13 +713,10 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                             n_to_fill = mask_missing.sum()
                             if n_to_fill:
                                 df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
-                        else:
-                            logging.info(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
-
+ 
                     # --- supprimer toutes les colonnes finissant par _old (robuste) ---
                     old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
                     if old_cols:
-                        logging.info(f"Suppression des colonnes temporaires : {old_cols}")
                         df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
                     else:
                         logging.error("Aucune colonne *_old à supprimer.")
@@ -739,8 +726,6 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
             except Exception as e:
                 logging.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
-        else:
-            logging.info("Aucun ancien parquet trouvé, création initiale du fichier.")
 
         def remove_full_duplicate_rows(df):
             """

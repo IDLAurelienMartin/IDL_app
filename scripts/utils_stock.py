@@ -146,7 +146,7 @@ def commit_and_push_github():
 
     files_to_push = list(LOCAL_CACHE_DIR.glob("*.*"))
     if not files_to_push:
-        logging.info("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
+        logging.error("Aucun fichier à pousser depuis LOCAL_CACHE_DIR.")
         return
 
     for file_path in files_to_push:
