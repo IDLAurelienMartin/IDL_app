@@ -26,9 +26,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-
-
-
 def run_script(script_name):
     """Exécute un script Python et affiche le résultat."""
     script_path = BASE_DIR / script_name
