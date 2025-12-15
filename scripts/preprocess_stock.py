@@ -71,7 +71,7 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
 
 def read_excel_from_github(path: str) -> pd.DataFrame:
     """Télécharge un Excel RAW depuis GitHub."""
-    url = us.RAW_BASE + path
+    url = path
     try:
         r = requests.get(url)
         r.raise_for_status()
