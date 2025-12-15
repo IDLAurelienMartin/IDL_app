@@ -37,18 +37,34 @@ def tab_home():
     st.markdown("---")
     st.header("Debug Log")
 
-    # Chemin relatif au dossier de l'app
-    SCRIPT_DIR = Path("scripts")  # supposé que prepare_data.log est dans scripts/
+    # Chemin du fichier log
+    SCRIPT_DIR = Path("scripts")
     LOG_FILE = SCRIPT_DIR / "prepare_data.log"
 
-    if st.button("Afficher le log"):
-        if LOG_FILE.exists():
-            # Lecture et affichage du log dans une zone défilante
-            log_content = LOG_FILE.read_text(encoding='utf-8')
-            st.text_area("Contenu du log", log_content, height=400)
-        else:
-            st.warning("Le fichier de log n'existe pas encore.")
+    # Crée le dossier scripts si nécessaire
+    SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Si le fichier n'existe pas, le créer avec un message initial
+    if not LOG_FILE.exists():
+        LOG_FILE.write_text(f"Log créé le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", encoding='utf-8')
+
+    # Bouton pour ajouter une ligne de test
+    if st.button("Ajouter une ligne test au log"):
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"Ligne test ajoutée le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        st.success("Ligne ajoutée au log !")
+
+    # Affichage du log dans une zone défilante
+    if LOG_FILE.exists():
+        log_content = LOG_FILE.read_text(encoding='utf-8')
+        st.text_area("Contenu du log", log_content, height=400)
+    else:
+        st.warning("Le fichier de log n'existe pas encore.")
+
+    # Affichage infos pour debug
+    st.write("Répertoire courant :", os.getcwd())
+    st.write("Chemin du log :", LOG_FILE.resolve())
+    st.write("Le fichier existe :", LOG_FILE.exists())
     
 def tab_QR_Codes():
     st.title("QR Codes et Code Barre")
