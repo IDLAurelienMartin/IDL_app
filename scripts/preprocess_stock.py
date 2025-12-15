@@ -60,9 +60,7 @@ def github_list_excel_files_recursive(folder_path: str) -> list[str]:
         item_name = item.get("name")
         if item_type == "file" and item_name.endswith(".xlsx"):
             files.append(item["download_url"])
-            logging.info(f"Fichier trouvé : {folder_path}/{item_name}")
         elif item_type == "dir":
-            logging.info(f"Sous-dossier détecté : {folder_path}/{item_name}, exploration récursive...")
             files_in_subdir = github_list_excel_files_recursive(f"{folder_path}/{item_name}")
             files.extend(files_in_subdir)
         else:

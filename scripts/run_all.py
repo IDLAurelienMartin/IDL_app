@@ -58,6 +58,7 @@ if __name__ == "__main__":
     # Exécution des scripts de préparation
     run_script("preprocess_stock.py")
     run_script("prepare_data.py")
+    run_script("utils_stock.py")
 
     # Lancement de l’application Streamlit
     streamlit_app = BASE_DIR.parent / "IDL_app.py"
