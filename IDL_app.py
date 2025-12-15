@@ -34,35 +34,18 @@ def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
 
-    st.markdown("---")
     st.header("Debug Log")
 
-    # Chemin du fichier log
-    SCRIPT_DIR = Path("scripts")
-    LOG_FILE = SCRIPT_DIR / "prepare_data.log"
+    # Chemin absolu vers le log créé par prepare_data.py
+    LOG_FILE = Path("/opt/render/project/src/scripts/prepare_data.log")  # ou le chemin exact sur ton serveur
 
-    # Crée le dossier scripts si nécessaire
-    SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Si le fichier n'existe pas, le créer avec un message initial
-    if not LOG_FILE.exists():
-        LOG_FILE.write_text(f"Log créé le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n", encoding='utf-8')
-
-    # Bouton pour ajouter une ligne de test
-    if st.button("Ajouter une ligne test au log"):
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"Ligne test ajoutée le {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        st.success("Ligne ajoutée au log !")
-
-    # Affichage du log dans une zone défilante
+    # Vérifie que le fichier existe
     if LOG_FILE.exists():
         log_content = LOG_FILE.read_text(encoding='utf-8')
         st.text_area("Contenu du log", log_content, height=400)
     else:
         st.warning("Le fichier de log n'existe pas encore.")
 
-    # Affichage infos pour debug
-    st.write("Répertoire courant :", os.getcwd())
     st.write("Chemin du log :", LOG_FILE.resolve())
     st.write("Le fichier existe :", LOG_FILE.exists())
     
