@@ -34,17 +34,21 @@ def tab_home():
     st.title("Accueil")
     st.write("Bienvenue dans l'application IDL_LaBrede.")
 
-        #-------TEST-------
-    SCRIPT_DIR = Path(__file__).parent.resolve() / "scripts"
+    st.markdown("---")
+    st.header("Debug Log")
+
+    # Chemin relatif au dossier de l'app
+    SCRIPT_DIR = Path("scripts")  # supposé que prepare_data.log est dans scripts/
     LOG_FILE = SCRIPT_DIR / "prepare_data.log"
 
-    st.title("Debug Log")
-    if st.button("Affiche le log"):
-        # Affiche le log si présent
+    if st.button("Afficher le log"):
         if LOG_FILE.exists():
-            st.text(LOG_FILE.read_text())
+            # Lecture et affichage du log dans une zone défilante
+            log_content = LOG_FILE.read_text(encoding='utf-8')
+            st.text_area("Contenu du log", log_content, height=400)
         else:
             st.warning("Le fichier de log n'existe pas encore.")
+
     
 def tab_QR_Codes():
     st.title("QR Codes et Code Barre")
