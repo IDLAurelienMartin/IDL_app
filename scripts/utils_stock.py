@@ -14,7 +14,7 @@ import logging
 # ===================== DOSSIERS =====================
 GIT_REPO_DIR = Path("/opt/render/project/src")  
 LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 DATA_IDL_DIR = Path("/opt/render/project/src/Data_IDL")
 DATA_IDL_CACHE = DATA_IDL_DIR / "Cache"

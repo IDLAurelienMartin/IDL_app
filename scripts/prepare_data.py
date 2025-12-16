@@ -73,7 +73,9 @@ def prepare_stock_data():
     # 3) Sauvegarde Parquet dans GitHub local
     # --- Répertoire temporaire pour les fichiers parquet ---
     LOCAL_TEMP_DIR = Path(__file__).parent / "temp_cache"
-    LOCAL_TEMP_DIR.mkdir(exist_ok=True)
+    LOCAL_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    
+
 
     #-------test----------
 
