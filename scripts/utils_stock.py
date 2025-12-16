@@ -12,20 +12,18 @@ import shutil
 import logging
 
 # ===================== DOSSIERS =====================
-GIT_REPO_DIR = Path("/opt/render/project/src")  
-LOCAL_CACHE_DIR = GIT_REPO_DIR / "Cache"
+# Dossier temporaire Streamlit Cloud pour caches
+LOCAL_CACHE_DIR = Path("/tmp/Cache")
 LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-DATA_IDL_DIR = Path("/opt/render/project/src/Data_IDL")
-DATA_IDL_CACHE = DATA_IDL_DIR / "Cache"
+DATA_IDL_CACHE = Path("/tmp/Data_IDL_Cache")
 DATA_IDL_CACHE.mkdir(parents=True, exist_ok=True)
 
-BASE_DIR = Path(__file__).resolve().parent
-CACHE_DIR = BASE_DIR.parent / "Cache"
-
-RENDER_CACHE_DIR = Path("/opt/render/project/src/render_cache")
+CACHE_DIR = Path("/tmp/Cache")  # uniformisation sur /tmp
+RENDER_CACHE_DIR = Path("/tmp/render_cache")
 RENDER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Fichier parquet (dans /tmp)
 PARQUET_FILE = LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
 
 # ===================== GITHUB =====================
