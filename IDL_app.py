@@ -30,6 +30,35 @@ import requests
 import streamlit.components.v1 as components
 import re
 import math
+# IDL_app.py
+import sys
+from pathlib import Path
+import streamlit as st
+
+BASE_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = BASE_DIR / "scripts"
+
+# Ajouter scripts/ au path **avant tout import**
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+# Maintenant les imports fonctionnent
+try:
+    from prepare_data import prepare_stock_data
+    from preprocess_stock import load_data, preprocess_data
+    from utils_stock import some_helper_function  # exemple
+except ModuleNotFoundError as e:
+    st.error(f"Erreur d'import : {e}")
+
+# --- Initialisation des données ---
+@st.cache_data(show_spinner="Initialisation des données…")
+def init_data():
+    prepare_stock_data()  # génère les Parquet dans le cache Streamlit
+    return "Cache prêt"
+
+init_data()
+st.title("IDL App")
+
 
 def tab_home():
     st.set_page_config(layout="wide")  # Doit être en premier
