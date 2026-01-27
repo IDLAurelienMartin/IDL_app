@@ -20,7 +20,7 @@ def load_data():
     """
 
     # === Dossiers ===
-    partage_base = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main"
+    partage_base = Path("https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main")
     dossier_mvt_stock = partage_base / "Mvt_stock"
     dossier_reception = partage_base / "Historique_Reception"
     dossier_sorties = partage_base / "Historique_des_Sorties"
