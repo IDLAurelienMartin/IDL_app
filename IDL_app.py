@@ -42,9 +42,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 # Maintenant les imports fonctionnent
 try:
-    from prepare_data import prepare_stock_data
-    from preprocess_stock import load_data, preprocess_data
-    from utils_stock import some_helper_function  # exemple
+    from scripts.prepare_data import prepare_stock_data
+    from scripts.preprocess_stock import preprocess_data
+    from scripts.utils_stock import some_helper_function
 except ModuleNotFoundError as e:
     st.error(f"Erreur d'import : {e}")
 
