@@ -44,7 +44,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 try:
     from scripts.prepare_data import prepare_stock_data
     from scripts.preprocess_stock import preprocess_data
-    from scripts.utils_stock import some_helper_function
+    from scripts.utils_stock import ajouter_totaux, color_rows, update_emplacement
 except ModuleNotFoundError as e:
     st.error(f"Erreur d'import : {e}")
 
