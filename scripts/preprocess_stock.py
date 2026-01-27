@@ -12,69 +12,49 @@ from datetime import datetime
 from openpyxl import load_workbook
 import glob
 import os
-
-import os
-import glob
+from io import BytesIO
+import zipfile
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook
 import requests
 
-def download_github_folder(user, repo, folder_path, local_dir):
-    """
-    Télécharge tous les fichiers d'un dossier GitHub (et sous-dossiers) dans local_dir.
-    """
-    api_url = f"https://api.github.com/repos/{user}/{repo}/contents/{folder_path}"
-    r = requests.get(api_url)
-    r.raise_for_status()
-    items = r.json()
-
-    local_dir = Path(local_dir)
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    for item in items:
-        if item["type"] == "file":
-            file_url = item["download_url"]
-            local_file = local_dir / item["name"]
-            r_file = requests.get(file_url)
-            r_file.raise_for_status()
-            with open(local_file, "wb") as f:
-                f.write(r_file.content)
-        elif item["type"] == "dir":
-            # récursion pour sous-dossiers
-            download_github_folder(user, repo, f"{folder_path}/{item['name']}", local_dir / item["name"])
-
 def load_data():
     """
-    Charge tous les fichiers Excel récents depuis le dépôt GitHub.
-    Prend en compte tous les sous-dossiers et crée un cache local.
+    Charge tous les fichiers Excel récents depuis GitHub (dépôt entier en zip).
     """
-    user = "IDLAurelienMartin"
-    repo = "Data_IDL"
     cache_dir = Path("./Cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Télécharger tout le dépôt dans le cache local
-    download_github_folder(user, repo, "", cache_dir)
+    # Télécharger le dépôt entier en zip
+    zip_url = "https://github.com/IDLAurelienMartin/Data_IDL/archive/refs/heads/main.zip"
+    r = requests.get(zip_url)
+    r.raise_for_status()  # pour déclencher une erreur si problème
+    with zipfile.ZipFile(BytesIO(r.content)) as z:
+        z.extractall(cache_dir)
 
-    # Définir les dossiers principaux
+    # Tous les chemins pointent maintenant sur le sous-dossier extrait
+    base_dir = cache_dir / "Data_IDL-main"
+
+    # Dossiers principaux
     dossiers = {
-        "Mvt_Stock": cache_dir / "Mvt_Stock",
-        "Historique_Reception": cache_dir / "Historique_Reception",
-        "Historique_des_Sorties": cache_dir / "Historique_des_Sorties",
-        "Ecart_Stock": cache_dir / "Ecart_Stock",
-        "Etat_Stock": cache_dir / "Etat_Stock",
-        "Base_Article": cache_dir / "Base_Article",
-        "CID": cache_dir / "CID",
+        "Mvt_Stock": base_dir / "Mvt_Stock",
+        "Historique_Reception": base_dir / "Historique_Reception",
+        "Historique_des_Sorties": base_dir / "Historique_des_Sorties",
+        "Ecart_Stock": base_dir / "Ecart_Stock",
+        "Etat_Stock": base_dir / "Etat_Stock",
+        "Base_Article": base_dir / "Base_Article",
+        "CID": base_dir / "CID",
+        "Detrompeur": base_dir / "Detrompeur",
     }
 
     # Fichiers spécifiques
-    file_article = cache_dir / r"Base_Article/Article €.xlsx"
-    file_inventaire = cache_dir / "Inventory_21_09_2025.xlsx"
-    file_excel_ean = cache_dir / r"Detrompeur/Liste detrompeur + EAN.xlsx"
+    file_article = dossiers["Base_Article"] / "Article €.xlsx"
+    file_inventaire = base_dir / "Inventory_21_09_2025.xlsx"
+    file_excel_ean = dossiers["Detrompeur"] / "Liste detrompeur + EAN.xlsx"
 
-    # === Date de référence ===
+    # Date référence
     def get_excel_creation_date(file_path: Path) -> datetime:
         wb = load_workbook(file_path, read_only=True)
         props = wb.properties
@@ -83,15 +63,11 @@ def load_data():
             return props.created
         return datetime.fromtimestamp(file_path.stat().st_ctime)
 
-    if not file_inventaire.exists():
-        raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
     date_ref = get_excel_creation_date(file_inventaire)
 
-    # === Fonction pour charger tous les fichiers récents dans un dossier et sous-dossiers ===
+    # Fonction pour charger tous les fichiers récents (sous-dossiers inclus)
+    import glob
     def concat_excel_from_folder(folder: Path, date_ref: datetime) -> pd.DataFrame:
-        if not folder.exists():
-            print(f"Dossier introuvable : {folder}")
-            return pd.DataFrame()
         fichiers = [
             Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
             if Path(f).stat().st_mtime > date_ref.timestamp()
@@ -102,42 +78,35 @@ def load_data():
                 dfs.append(pd.read_excel(f, dtype=str, engine='openpyxl'))
             except Exception as e:
                 print(f"Impossible de lire {f}: {type(e).__name__} - {e}")
-        if dfs:
-            return pd.concat(dfs, ignore_index=True)
-        return pd.DataFrame()
+        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
-    # === Chargement des DataFrames principaux ===
     df_mvt_stock = concat_excel_from_folder(dossiers["Mvt_Stock"], date_ref)
     df_reception = concat_excel_from_folder(dossiers["Historique_Reception"], date_ref)
     df_sorties = concat_excel_from_folder(dossiers["Historique_des_Sorties"], date_ref)
 
-    # === Cas ECART STOCK (besoin des deux derniers fichiers) ===
-    files = sorted(dossiers["Ecart_Stock"].glob("*.xlsx"), key=os.path.getmtime)
-    if len(files) >= 2:
-        df_ecart_stock_prev = pd.read_excel(files[-2], engine='openpyxl')
-        df_ecart_stock_last = pd.read_excel(files[-1], engine='openpyxl')
-    else:
-        df_ecart_stock_prev = pd.DataFrame()
-        df_ecart_stock_last = pd.DataFrame()
+    # ECART STOCK : deux derniers fichiers
+    files_ecart = sorted(dossiers["Ecart_Stock"].glob("*.xlsx"), key=os.path.getmtime)
+    df_ecart_prev = pd.read_excel(files_ecart[-2], engine='openpyxl') if len(files_ecart) >= 2 else pd.DataFrame()
+    df_ecart_last = pd.read_excel(files_ecart[-1], engine='openpyxl') if files_ecart else pd.DataFrame()
 
     df_etat_stock = concat_excel_from_folder(dossiers["Etat_Stock"], date_ref)
-    Base_Article_df = pd.read_excel(dossiers["Base_Article"] / "Base Article V2.xlsx", engine='openpyxl') \
-        if (dossiers["Base_Article"] / "Base Article V2.xlsx").exists() else pd.DataFrame()
-    df_excel_ean = pd.read_excel(file_excel_ean, engine='openpyxl') if file_excel_ean.exists() else pd.DataFrame()
     df_article_euros = pd.read_excel(file_article, engine='openpyxl') if file_article.exists() else pd.DataFrame()
     df_inventaire = pd.read_excel(file_inventaire, engine='openpyxl')
+    df_excel_ean = pd.read_excel(file_excel_ean, engine='openpyxl') if file_excel_ean.exists() else pd.DataFrame()
+    Base_Article_df = pd.read_excel(dossiers["Base_Article"] / "Base Article V2.xlsx", engine='openpyxl') \
+        if (dossiers["Base_Article"] / "Base Article V2.xlsx").exists() else pd.DataFrame()
 
     return (
         df_mvt_stock,
         df_reception,
         df_sorties,
         df_inventaire,
-        df_ecart_stock_prev,
-        df_ecart_stock_last,
+        df_ecart_prev,
+        df_ecart_last,
         df_article_euros,
         df_etat_stock,
         df_excel_ean,
-        files[-1] if files else None,
+        files_ecart[-1] if files_ecart else None,
         date_ref,
         Base_Article_df,
     )
