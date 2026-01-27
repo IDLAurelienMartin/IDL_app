@@ -163,7 +163,7 @@ def tab_QR_Codes():
             st.markdown("<h5>Choisir Format :</h5>", unsafe_allow_html=True)
             nb_qr_format = st.radio(
                 label="",
-                options=["Grand Format", "Petit Format-Picking", "Petit Format-Stockage"],
+                options=[ "Petit Format-Picking", "Petit Format-Stockage", "Grand Format"],
                 label_visibility="collapsed"
             )
         with col2:
