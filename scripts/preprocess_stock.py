@@ -1,188 +1,81 @@
-# scripts/preprocess_stock.py
-import os
+# scripts/preprocess_stock_cloud.py
 import pandas as pd
-from pathlib import Path
-import sys
-from datetime import datetime
-import re
-from openpyxl import load_workbook
-import streamlit as st
-import urllib.request
-import io
-import requests
-import shutil
-from io import BytesIO
 import numpy as np
-import base64
-import logging
-# Import local
-sys.path.append(str(Path(__file__).resolve().parent))
-import utils_stock as us
+import requests
+import io
+import unicodedata
+import re
+import sys
+import streamlit as st
+from pathlib import Path
+from datetime import datetime
+from openpyxl import load_workbook
 
-# Chemin absolu basé sur le script
-SCRIPT_DIR = Path(__file__).parent.resolve()
-LOG_FILE = SCRIPT_DIR / "prepare_data.log"
+# -------------------------------
+# Fonctions utilitaires pour GitHub
+# -------------------------------
+GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main"
 
-logging.basicConfig(
-    filename=LOG_FILE,
-    filemode="a",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+def read_excel_from_github(file_path: str, sheet_name=0):
+    url = f"{GITHUB_BASE}/{file_path}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    return pd.read_excel(io.BytesIO(resp.content), sheet_name=sheet_name, engine="openpyxl")
 
-# ============================================================
-# === UTILITAIRES GITHUB
-# ============================================================
+def read_csv_from_github(file_path: str, **kwargs):
+    url = f"{GITHUB_BASE}/{file_path}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    return pd.read_csv(io.StringIO(resp.text), **kwargs)
 
-def github_list_excel_files_recursive(folder_path: str) -> list[str]:
-    """
-    Liste le contenu d’un dossier GitHub via l’API.
-    Retourne une liste de dictionnaires :
-    [{'name':..., 'path':..., 'type': 'file'/'dir', 'download_url': ...}, ...]
-    """
-    logging.info(f"Accès au dossier GitHub : {folder_path}")
-    url = f"{us.GITHUB_API_BASE}{folder_path}"
-    try:
-        r = requests.get(url, headers=us.HEADERS)
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        logging.error(f"Dossier introuvable sur GitHub : {url} ({e})")
-        return []
-    except Exception as e:
-        logging.exception(f"Erreur inattendue lors de l'accès à {url} : {e}")
-        return []
-
-    items = r.json()
-    files = []
-
-    for item in items:
-        item_type = item.get("type")
-        item_name = item.get("name")
-        if item_type == "file" and item_name.endswith(".xlsx"):
-            files.append(item["download_url"])
-        elif item_type == "dir":
-            files_in_subdir = github_list_excel_files_recursive(f"{folder_path}/{item_name}")
-            files.extend(files_in_subdir)
-        else:
-            logging.debug(f"Élément ignoré : {folder_path}/{item_name} (type={item_type})")
-
-    logging.info(f"Total fichiers Excel trouvés dans {folder_path} : {len(files)}")
-    return files
-
-def read_excel_from_github(path: str) -> pd.DataFrame:
-    """Télécharge un Excel RAW depuis GitHub."""
-    url = path
-    try:
-        r = requests.get(url)
-        r.raise_for_status()
-        return pd.read_excel(BytesIO(r.content))
-    except:
-        logging.error(f"Échec lecture : {url}")
-        return pd.DataFrame()
-
-
-def get_excel_creation_date_from_github(path: str) -> datetime:
-    """Récupère la date interne d’un Excel depuis GitHub."""
-    url = path
-    r = requests.get(url)
-    r.raise_for_status()
-
-    wb = load_workbook(filename=BytesIO(r.content), read_only=True)
-    props = wb.properties
-    wb.close()
-
-    if props.created:
-        return props.created
-    raise ValueError("Métadonnée Excel 'created' introuvable.")
-
-
-# ============================================================
-# === CHARGEMENT DES DONNÉES
-# ============================================================
-
+# -------------------------------
+# Load data
+# -------------------------------
 def load_data():
     """
     Charge toutes les données depuis GitHub.
-    Tous les fichiers sont récupérés dynamiquement via l'API GitHub.
     """
+    print("=== CHARGEMENT DES DONNEES DEPUIS GITHUB ===")
 
-    # ----------------------------------------
-    # Inventaire
-    # ----------------------------------------
-    INVENTORY_PATH = "Inventory_21_09_2025.xlsx"
+    # ----- Fichiers principaux -----
+    Base_Article = read_excel_from_github("Base_Article/Base Article V2.xlsx")
+    df_article_euros = read_excel_from_github("Base_Article/Article €.xlsx")
+    df_inventaire = read_excel_from_github("Inventory_21_09_2025.xlsx")
+
+    # ----- Etat stock -----
+    # Si CSV mal formé
     try:
-        date_ref = get_excel_creation_date_from_github(INVENTORY_PATH)
-        logging.info(f"Date interne inventaire : {date_ref}")
-    except Exception as e:
-        logging.error(f"Erreur lecture métadonnées inventaire -> fallback now() {e}")
-        date_ref = datetime.now()
+        df_etat_stock = read_csv_from_github("Etat_Stock/etat_stock_latest.csv", sep=None, engine="python", encoding="latin-1", on_bad_lines="skip")
+        if df_etat_stock.shape[1] == 1:
+            df_etat_stock = df_etat_stock.iloc[:, 0].str.split(",", expand=True)
+    except Exception:
+        # fallback Excel
+        df_etat_stock = read_excel_from_github("Etat_Stock/etat_stock_latest.xlsx")
 
-    df_inventaire = read_excel_from_github(INVENTORY_PATH)
+    # ----- Ecart stock -----
+    df_ecart_stock_prev = read_excel_from_github("Ecart_Stock/ecart_stock_prev.xlsx")
+    df_ecart_stock_last = read_excel_from_github("Ecart_Stock/ecart_stock_last.xlsx")
 
-    # ----------------------------------------
-    # Fonction pour charger tous les fichiers Excel d'un dossier GitHub
-    # ----------------------------------------
-    def load_folder(folder):
-        files = github_list_excel_files_recursive(folder)
-        dfs = [read_excel_from_github(f) for f in files]
-        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    # ----- Mouvements, Réception, Sorties -----
+    df_mvt_stock = read_excel_from_github("Mvt_stock/mvt_stock_latest.xlsx")
+    df_reception = read_excel_from_github("Historique_Reception/reception_latest.xlsx")
+    df_sorties = read_excel_from_github("Historique_des_Sorties/sorties_latest.xlsx")
 
-    # Chargement des données
-    df_mvt_stock = load_folder("Mvt_stock")
-    df_reception = load_folder("Historique_Reception")
-    df_sorties = load_folder("Historique_des_Sorties")
-
-    # ----------------------------------------
-    # ECART STOCK : dernier et avant-dernier fichiers
-    # ----------------------------------------
-
-    ecart_files = github_list_excel_files_recursive("Ecart_Stock")
-
-    # Créer une liste tuples (fichier, date_interne)
-    files_with_dates = []
-    for f in ecart_files:
-        try:
-            date_creation = get_excel_creation_date_from_github(f)
-            files_with_dates.append((f, date_creation))
-        except Exception as e:
-            logging.error(f"Impossible de lire la date de {f} : {e}")
-
-    # Trier par date de création croissante
-    files_with_dates.sort(key=lambda x: x[1])
-
-    if len(files_with_dates) < 2:
-        raise FileNotFoundError("Pas assez de fichiers d’écart stock avec date interne.")
-
-    # Déterminer les fichiers avant-dernier et dernier
-    file_prev = files_with_dates[-2][0]
-    file_last = files_with_dates[-1][0]
-
-    # Lecture des fichiers Excel
-    df_ecart_stock_prev = read_excel_from_github(file_prev)
-    df_ecart_stock_last = read_excel_from_github(file_last)
-
-    # Sauvegarde du nom du dernier fichier pour référence (ex: cache Render)
-    file_last_txt = us.RENDER_CACHE_DIR / "file_last.txt"
-    file_last_txt.write_text(file_last)  # on écrit le chemin GitHub, pas local
-
-    # ----------------------------------------
-    # Article € (fichier unique)
-    # ----------------------------------------
-    df_article_euros = read_excel_from_github("Article_euros.xlsx")
-
-    df_etat_stock = read_excel_from_github("etat_stock.xlsm")
+    # ----- Liste EAN -----
     df_excel_ean = read_excel_from_github("Detrompeur/Liste detrompeur + EAN.xlsx")
-    # ----------------------------------------
-    # Synthèse
-    # ----------------------------------------
-    logging.info("\n=== SYNTHÈSE GITHUB ===")
-    logging.info(f"Mvt Stock : {len(df_mvt_stock)}")
-    logging.info(f"Réception : {len(df_reception)}")
-    logging.info(f"Sorties   : {len(df_sorties)}")
-    logging.info(f"Écart prev: {len(df_ecart_stock_prev)}")
-    logging.info(f"Écart last: {len(df_ecart_stock_last)}")
-    logging.info(f"Articles €: {len(df_article_euros)}")
-    logging.info(f"Inventaire: {len(df_inventaire)}")
+
+    # ----- Date de référence depuis inventaire -----
+    def get_excel_creation_date_from_bytes(file_bytes: bytes):
+        with io.BytesIO(file_bytes) as f:
+            wb = load_workbook(f, read_only=True)
+            props = wb.properties
+            wb.close()
+            if props.created:
+                return props.created
+            return datetime.now()
+
+    date_ref = get_excel_creation_date_from_bytes(requests.get(f"{GITHUB_BASE}/Inventory_21_09_2025.xlsx").content)
+    print(f"Date de référence inventaire : {date_ref.strftime('%d/%m/%Y')}")
 
     return (
         df_mvt_stock,
@@ -194,26 +87,42 @@ def load_data():
         df_article_euros,
         df_etat_stock,
         df_excel_ean,
-        file_last,  # chemin GitHub du dernier fichier
+        date_ref,
+        Base_Article
     )
 
-# =========================
-# === PREPROCESSING
-# =========================
-def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock, df_etat_stock, df_excel_ean,):  
+# -------------------------------
+# Preprocess data
+# -------------------------------
+def preprocess_data(
+        df_mvt_stock,
+        df_reception,
+        df_sorties,
+        df_inventaire,
+        df_ecart_stock_prev,
+        df_ecart_stock_last,
+        df_article_euros,
+        df_etat_stock,
+        df_excel_ean,
+        date_ref,
+        Base_Article,
+    ): 
+        print("\n=== PREPROCESSING DES DONNEES ===")
+        print(pd.__version__)
+        print(f"date_ref : {date_ref}, type : {type(date_ref)}")
+        
 
-        # --- ECART STOCK ---
         df_ecart_stock_prev = df_ecart_stock_prev.drop(columns=['Var','Locations','MMS Stock (1 piece)','WMS Stock (1 piece)',
                                                     'Pick qty (1 piece)','Pick qty','Difference (1 piece)'], errors='ignore')
         df_ecart_stock_prev = df_ecart_stock_prev.rename(columns={
             "Article Name": "Désignation",
             "Article number (MGB)": "MGB_6",
-            "MMS Stock": "MMS_Stock",
-            "WMS Stock": "WMS_Stock",
+            "MMS Stock": "MMS_Stock : Metro",
+            "WMS Stock": "WMS_Stock : IDL",
             "Difference": "Difference_MMS-WMS"
         })
         df_ecart_stock_prev['MGB_6'] = df_ecart_stock_prev['MGB_6'].astype(str)
-        for col in ["MMS_Stock","WMS_Stock","Difference_MMS-WMS"]:
+        for col in ["MMS_Stock : Metro","WMS_Stock : IDL","Difference_MMS-WMS"]:
             df_ecart_stock_prev[col] = pd.to_numeric(df_ecart_stock_prev[col], errors='coerce')
 
         df_ecart_stock_last = df_ecart_stock_last.drop(columns=['Var','Locations','MMS Stock (1 piece)','WMS Stock (1 piece)',
@@ -221,8 +130,8 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_ecart_stock_last = df_ecart_stock_last.rename(columns={
             "Article Name": "Désignation",
             "Article number (MGB)": "MGB_6",
-            "MMS Stock": "MMS_Stock",
-            "WMS Stock": "WMS_Stock",
+            "MMS Stock": "MMS_Stock : Metro",
+            "WMS Stock": "WMS_Stock : IDL",
             "Difference": "Difference_MMS-WMS"
         })
         df_ecart_stock_last['MGB_6'] = df_ecart_stock_last['MGB_6'].astype(str)
@@ -234,15 +143,24 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             else:
                 df_ecart_stock_last[col] = df_ecart_stock_last[col].where(df_ecart_stock_last[col].notna(), None)
 
-        for col in ["MMS_Stock","WMS_Stock","Difference_MMS-WMS"]:
+        for col in ["MMS_Stock : Metro","WMS_Stock : IDL","Difference_MMS-WMS"]:
             df_ecart_stock_last[col] = pd.to_numeric(df_ecart_stock_last[col], errors='coerce')
         
         df_ecart_stock_prev['MGB_6'] = df_ecart_stock_prev['MGB_6'].astype(str)
         df_ecart_stock_last['MGB_6'] = df_ecart_stock_last['MGB_6'].astype(str)
 
         df_ecart_stock_last['Deja_Present'] = df_ecart_stock_last['MGB_6'].isin(df_ecart_stock_prev['MGB_6'])
+        
+        print("Apercu df_ecart_stock_prev (head):")
+        print(df_ecart_stock_prev.head(5))
+        print("Colonnes df_ecart_stock_prev apres preprocess :", list(df_ecart_stock_prev.columns))
+        print("Apercu df_ecart_stock_last (head):")
+        print(df_ecart_stock_last.head(5))
+        print("Colonnes df_ecart_stock_last apres preprocess :", list(df_ecart_stock_last.columns))
+
 
         # --- INVENTAIRE ---
+        print("--- INVENTAIRE ---")
         sys.stdout.reconfigure(encoding='utf-8')
 
         if not df_inventaire.empty:
@@ -269,7 +187,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
             # Renommer pour cohérence interne
             df_inventaire = df_inventaire.rename(columns={
-                "SubSys": "Ref_MERTO",
+                "SubSys": "Ref_Metro",
                 "Initial Quantity": "Initial_Quantity",
                 "Final Quantity": "Inventaire_Final_Quantity",
                 "Difference (%)": "Difference_%"
@@ -281,17 +199,25 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     df_inventaire["Inventaire_Final_Quantity"], errors="coerce"
                 )
 
+        else:
+            print("Aucun fichier inventaire trouvé ou vide.")
+
         if 'MGB' in df_inventaire.columns:
             df_inventaire['MGB'] = df_inventaire['MGB'].astype(str)
             df_inventaire['MGB_6'] = df_inventaire['MGB'].str[:-6]
 
         remplacement = {"Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
-                        "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã": "à", "¤": "", "«": "", "»": ""}
+                        "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã ": "à ", "ÃŽ": "î", "Ã": "û", "¤": "", "«": "", "»": "", "Â": ""}
         if 'Description' in df_inventaire.columns:
             for ancien, nouveau in remplacement.items():
                 df_inventaire["Description"] = df_inventaire["Description"].str.replace(ancien, nouveau, regex=False)
+        
+        print("Apercu df_inventaire (head):")
+        print(df_inventaire.head(5))
+        print("Colonnes apres nettoyage :", list(df_inventaire.columns))
 
         # --- MVT STOCK ---
+        print("--- MVT STOCK ---")
         df_mvt_stock = df_mvt_stock.drop(columns=[
             'day_id','ste_nr','SGA','SSGA','colis_non_homogene','art_cont_gross','art_cont_gross_unit',
             'art_weight_gross_cust','type_mvt','qty_bb','pallet_homogene_count','unites_mvt_ccaf_pc','unites_mvt_ccvm_pc'
@@ -299,18 +225,41 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         df_mvt_stock[["Date", "Heure"]] = df_mvt_stock["stk_mvt_datetime"].str.split(" ", expand=True)
         df_mvt_stock = df_mvt_stock.drop(columns=['stk_mvt_datetime'])
+        # date_ref doit être au format 'YYYY-MM-DD' ou datetime
+        
+        print("Dates Mvt Stock :")
+        print(f"date_ref : {df_mvt_stock['Date'].iloc[0]}, type : {type(df_mvt_stock['Date'].iloc[0])}")
+        df_mvt_stock["Date"] = pd.to_datetime(df_mvt_stock["Date"], format="%Y-%m-%d", errors="coerce")
+        print(f"date_ref : {df_mvt_stock['Date'].iloc[0]}, type : {type(df_mvt_stock['Date'].iloc[0])}")
+        df_mvt_stock = df_mvt_stock[df_mvt_stock["Date"].notna() & (df_mvt_stock["Date"] >= date_ref)]
+        
         df_mvt_stock["stk_chg_desc_details"] = df_mvt_stock["stk_chg_desc_details"].fillna("")
         df_mvt_stock["Code_Mouvement"] = df_mvt_stock["stk_chg_desc_details"].str.extract(r":(\d+)")
         df_mvt_stock["Intituler_Mouvement"] = df_mvt_stock["stk_chg_desc_details"].str.extract(r"::([^:]+)$")
         df_mvt_stock = df_mvt_stock.drop(columns=['stk_chg_desc_details'])
-        df_mvt_stock["Code_Agent"] = df_mvt_stock["emp_email"].str.split(".", expand=True)[0]
+
+        # Créer Code_Agent uniquement si des valeurs valides existent
+        if "emp_email" in df_mvt_stock.columns and df_mvt_stock["emp_email"].notna().any():
+            df_mvt_stock["Code_Agent"] = df_mvt_stock["emp_email"].fillna("").str.split(".", expand=True).iloc[:, 0]
+        else:
+            df_mvt_stock["Code_Agent"] = pd.Series([""] * len(df_mvt_stock))
         df_mvt_stock = df_mvt_stock.drop(columns=['emp_email'])
-        df_mvt_stock[["prefix_emplacement", "Emplacement"]] = df_mvt_stock["location_nr"].str.split("-", n=1, expand=True)
+
+        # Remplacer les NaN par chaîne vide
+        location_filled = df_mvt_stock["location_nr"].fillna("")
+
+        # Split en 2 colonnes, n=1
+        split_cols = location_filled.str.split("-", n=1, expand=True)
+
+        # Assigner les colonnes en vérifiant si elles existent
+        df_mvt_stock["prefix_emplacement"] = split_cols[0] if 0 in split_cols.columns else ""
+        df_mvt_stock["Emplacement"] = split_cols[1] if 1 in split_cols.columns else ""
+
         df_mvt_stock = df_mvt_stock.drop(columns=['location_nr'])
 
         df_mvt_stock = df_mvt_stock.rename(columns={
             "art_name": "Désignation",
-            "Subsys": "Ref_MERTO",
+            "Subsys": "Ref_Metro",
             "art_weight_ind": "Au_Kg",
             "sscc": "SSCC",
             "qty": "Qty_Mouvement",
@@ -323,13 +272,13 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         })
 
         # Liste des colonnes dans l'ordre souhaité et suppression des doublons
-        nouvel_ordre = ["Date", "Heure", "Code_Agent","MGB","MGB_6", "Désignation", "Ref_MERTO",
+        nouvel_ordre = ["Date", "Heure", "Code_Agent","MGB","MGB_6", "Désignation", "Ref_Metro",
                         "Au_Kg", "SSCC", "Type_Mouvement","Code_Mouvement","Intituler_Mouvement", "Info_Mouvement",
                         'Synchro_MMS',"Cellule", 'prefix_emplacement',"Emplacement","Qty_Mouvement"]
         nouvel_ordre = list(dict.fromkeys(nouvel_ordre))  # supprime les doublons
         df_mvt_stock = df_mvt_stock[nouvel_ordre]
 
-        df_mvt_stock['Synchro_MMS'] = df_mvt_stock['Synchro_MMS'].replace({1: 'Oui', 0: 'Non'})
+        df_mvt_stock['Synchro_MMS'] = df_mvt_stock['Synchro_MMS'].fillna(0).astype(int).map({1:'Oui', 0:'Non'})
         df_mvt_stock['Type_Mouvement'] = df_mvt_stock['Type_Mouvement'].replace({
             'DELETE_STOCK': 'Suppression_Stock',
             'EDIT_QUANTITY': 'Modification_Stock',
@@ -340,7 +289,10 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_mvt_stock['Info_Mouvement'] = df_mvt_stock['Info_Mouvement'].str.upper()
         df_mvt_stock['MGB_6'] = df_mvt_stock['MGB_6'].astype(str)
 
+        print("Colonnes apres nettoyage :", list(df_mvt_stock.columns))
+        
         # --- RECEPTION ---
+        print("--- RECEPTION ---")
         df_reception = df_reception.drop(columns=['ste_nr','SSGA','job_type_fr','job_id','job_begin_datetime','job_started_datetime',
             'var_nr','bdl_nr','SGA','art_weight_gross','art_weight_gross_cust','art_weight_net',
             'art_weight_unit','art_weight_ind.1','art_volume_net','art_volume_unit',
@@ -349,13 +301,69 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         df_reception[["Date", "Heure"]] = df_reception["job_done_datetime"].str.split(",", expand=True)
         df_reception = df_reception.drop(columns=['job_done_datetime'])
-        df_reception[["MGB","Désignation"]] = df_reception["art_name"].str.split("-",n=1, expand=True)
+        # date_ref doit être au format 'YYYY-MM-DD' ou datetime)
+        print("Dates Reception :")
+        print(f"date_ref : {df_reception['Date'].iloc[0]}, type : {type(df_reception['Date'].iloc[0])}")
+        # définir la locale française
+        MOIS_FR = {
+            "janv": "01",
+            "fevr": "02",
+            "fev": "02",
+            "mars": "03",
+            "avr": "04",
+            "mai": "05",
+            "juin": "06",
+            "juil": "07",
+            "aout": "08",
+            "sept": "09",
+            "oct": "10",
+            "nov": "11",
+            "dec": "12",
+        }
+
+        def parse_date_fr(val):
+            if not isinstance(val, str):
+                return pd.NaT
+
+            # supprime accents (avr → avr, fév → fev)
+            s = unicodedata.normalize("NFKD", val).encode("ascii", "ignore").decode()
+            s = s.lower().strip()
+
+            # supprime les points
+            s = s.replace(".", "")
+
+            # remplace mois français par chiffre
+            for mois, num in MOIS_FR.items():
+                s = re.sub(rf"\b{mois}\b", num, s)
+
+            # ex: "30 04 2025"
+            try:
+                return pd.to_datetime(s, format="%d %m %Y")
+            except Exception:
+                return pd.NaT
+
+        df_reception["Date"] = df_reception["Date"].apply(parse_date_fr)
+        # Affichage formaté sans changer le type
+        print(f"date_ref : {df_reception['Date'].iloc[0]}, type : {type(df_reception['Date'].iloc[0])}")
+        df_reception = df_reception[df_reception["Date"].notna() & (df_reception["Date"] >= date_ref)]     
+
+        # Partition de art_name en MGB et Désignation
+        if "art_name" in df_reception.columns and df_reception["art_name"].notna().any():
+            df_reception[["MGB","Désignation"]] = df_reception["art_name"].fillna("").str.split("-", n=1, expand=True)
+        else:
+            df_reception[["MGB","Désignation"]] = pd.DataFrame([["",""]] * len(df_reception), columns=["MGB","Désignation"])
+
         df_reception = df_reception.drop(columns=['art_name'])
-        df_reception["Code_Agent"] = df_reception["emp_upn"].str.split(".", expand=True)[0]
-        df_reception = df_reception.drop(columns=['emp_upn'])
         
+        # Créer Code_Agent uniquement si des valeurs valides existent
+        if "emp_upn" in df_reception.columns and df_reception["emp_upn"].notna().any():
+            df_reception["Code_Agent"] = df_reception["emp_upn"].fillna("").str.split(".", expand=True).iloc[:, 0]
+        else:
+            df_reception["Code_Agent"] = pd.Series([""] * len(df_reception))
+        df_reception = df_reception.drop(columns=['emp_upn'])
+
         df_reception = df_reception.rename(columns={
-            "art_subsys": "Ref_MERTO",
+            "art_subsys": "Ref_Metro",
             "CCVM": "Conditionnement_Vente",
             "CCAF": "Conditionnement_Fournisseur",
             "gr_date": "Date_Camion",
@@ -383,37 +391,55 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
         df_reception["MGB_6"] = df_reception["MGB"].apply(extraire_mgb6)
 
-
-
         nouvel_ordre = [
             "Date", "Heure", "Code_Agent", "MGB","MGB_6", "Désignation","SV", "SA", "GA",
-            "Ref_MERTO", "Conditionnement_Vente", "Conditionnement_Fournisseur","Au_Kg", "SSCC",
+            "Ref_Metro", "Conditionnement_Vente", "Conditionnement_Fournisseur","Au_Kg", "SSCC",
             "Date_Camion", "N°_Camion", "Cellule",  "Type_Recep","Qty_Reception", "Qty_Colis_Reception"
         ]
         df_reception = df_reception[nouvel_ordre]
 
+        print("Colonnes apres nettoyage :", list(df_reception.columns))
+
         # --- SORTIES ---
+        print("--- SORTIES ---")
         df_sorties = df_sorties.drop(columns=[
-            'sto_nr','ord_nr','ord_datetime','cus_sto_nr','cus_nr','ord_status_datetime','inv_date','art_cont_gross','art_cont_gross_unit',
+            'sto_nr','ord_datetime','cus_sto_nr','cus_nr','ord_status_datetime','inv_date','art_cont_gross','art_cont_gross_unit',
             'ord_line_code','ord_qty_follow','art_pick_tool','art_pick_area','art_pick_id','type_UO','unites_pickees','nb_UO',
             'cre_date','upd_date','art_weight_gross_cust'
         ], errors='ignore')
 
         df_sorties[["Date", "Heure"]] = df_sorties["art_pick_datetime"].str.split(" ", expand=True)
         df_sorties = df_sorties.drop(columns=['art_pick_datetime'])
+        # date_ref doit être au format 'YYYY-MM-DD' ou datetime
+        print(f"date_ref : {df_sorties['Date'].iloc[0]}, type : {type(df_sorties['Date'].iloc[0])}")
+        df_sorties["Date"] = pd.to_datetime(df_sorties["Date"], format="%Y-%m-%d", errors="coerce")
+        print(f"date_ref : {df_sorties['Date'].iloc[0]}, type : {type(df_sorties['Date'].iloc[0])}")
+        # Supprimer les lignes antérieures à date_ref
+        df_sorties = df_sorties[df_sorties["Date"] >= date_ref]
+
         df_sorties["Emplacement"] = df_sorties["art_pick_pos"].str.split("-", n=1, expand=True)[1]
         df_sorties = df_sorties.drop(columns=["art_pick_pos"])
         df_sorties["Code_Agent"] = df_sorties["art_picker_upn"].str.split(".", expand=True)[0]
+
+        # Créer Code_Agent uniquement si des valeurs valides existent
+        if "art_picker_upn" in df_sorties.columns and df_sorties["art_picker_upn"].notna().any():
+            df_sorties["Code_Agent"] = df_sorties["art_picker_upn"].fillna("").str.split(".", expand=True).iloc[:, 0]
+        else:
+            df_sorties["Code_Agent"] = pd.Series([""] * len(df_sorties))
+
         df_sorties = df_sorties.drop(columns=['art_picker_upn'])
+
         df_sorties['Qty/Article/Poids'] = pd.to_numeric(df_sorties['art_pick_qty'], errors='coerce')
 
+        print("Colonnes avant nettoyage :", list(df_sorties.columns))
         df_sorties = df_sorties.rename(columns={
             'dlv_date': "Date_de_livraison",
             'ord_qty' : "Qty_Commandé",
             "ord_picked_qty" : "Qty_Total_Préparé",
-            "art_subsys" : "Ref_MERTO",
+            "art_subsys" : "Ref_Metro",
             "art_name" : "Désignation",
             "art_weight_ind": "Au_Kg",
+            "ord_nr": "N°_Commande",
             "cellule" : "Cellule"
         })
 
@@ -421,21 +447,20 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
         df_sorties['MGB_6'] = df_sorties['MGB'].str[:-6]
 
         nouvel_ordre_s = [
-            "Date", "Heure", "Date_de_livraison", "Code_Agent", "MGB","MGB_6", "Désignation","SV",
-            "Ref_MERTO","Au_Kg","Qty_Commandé","Qty_Total_Préparé","Qty/Article/Poids", "Cellule",  "Emplacement"
+            "Date", "Heure", "Date_de_livraison", "Code_Agent", "MGB","MGB_6", "Désignation","SV","N°_Commande",
+            "Ref_Metro","Au_Kg","Qty_Commandé","Qty_Total_Préparé","Qty/Article/Poids", "Cellule",  "Emplacement"
         ]
         df_sorties = df_sorties[nouvel_ordre_s]
 
+        print("Colonnes apres nettoyage :", list(df_sorties.columns))
+    
         # --- ARTICLES €---
+        print("--- ARTICLES €---")
         # --- Nettoyage robuste du fichier Article_€.xlsx ---
-        # (à placer juste après df_article_euros = pd.read_excel(file_article) ou
-        # si df_article_euros est déjà lu plus haut)
-
-        
 
         # 1) Si le DF est vide on sort
         if df_article_euros is None or df_article_euros.empty:
-            logging.info("df_article_euros vide ou non trouvé.")
+            print("df_article_euros vide ou non trouvé.")
         else:
             # Toujours travailler en str pour éviter surprises
             df_article_euros = df_article_euros.astype(str)
@@ -443,6 +468,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
             # Nettoyage basique des noms de colonnes lus par pandas
             cols_raw = [str(c).strip() for c in df_article_euros.columns]
             cols_joined = " | ".join(cols_raw).lower()
+            print("Colonnes lues initialement :", cols_raw)
 
             # 2) Détecter si pandas a pris la première ligne comme données (cas où cols_raw sont des valeurs)
             # heuristique : si la première colonne est numérique ou ressemble à une référence (ex: '68513')
@@ -460,6 +486,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
 
             # 3) Si l'entête semble manquer : prendre la première ligne comme header
             if looks_like_data_header:
+                print("Info: La premiere ligne semble contenir l'entête réelle → on l'utilise comme header.")
                 # prendre la 1ère ligne comme header, puis supprimer cette ligne des données
                 new_header = df_article_euros.iloc[0].astype(str).str.strip().tolist()
                 df_article_euros = df_article_euros[1:].reset_index(drop=True)
@@ -474,6 +501,8 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 clean_cols.append(c)
             df_article_euros.columns = clean_cols
 
+            print("Colonnes apres nettoyage :", list(df_article_euros.columns))
+
             # 5) Renommer la colonne prix (recherche fuzz : '€', 'unitaire', 'prix')
             euro_col = None
             for c in df_article_euros.columns:
@@ -483,7 +512,10 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     break
             if euro_col:
                 df_article_euros = df_article_euros.rename(columns={euro_col: "Prix_Unitaire"})
- 
+                print(f"-> Colonne prix detectee et renommee : '{euro_col}' -> 'Prix_Unitaire'")
+            else:
+                print("Colonne prix introuvable (ni '€', ni 'unitaire', ni 'prix').")
+
             # 6) Renommer la colonne référence si nécessaire (ex: 'ref', 'Ref', 'Réf', 'MGB', ...)
             ref_col = None
             for c in df_article_euros.columns:
@@ -493,6 +525,7 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     break
             if ref_col and ref_col != 'ref':
                 df_article_euros = df_article_euros.rename(columns={ref_col: 'ref'})
+                print(f"-> Colonne reference renommee : '{ref_col}' -> 'ref'")
             elif not ref_col:
                 # tenter de détecter la colonne référence par type (entier)
                 for c in df_article_euros.columns:
@@ -500,9 +533,10 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                     if all(re.fullmatch(r'\d+', s) for s in sample):
                         df_article_euros = df_article_euros.rename(columns={c: 'ref'})
                         ref_col = 'ref'
+                        print(f"-> Colonne reference detectee automatiquement : '{c}' -> 'ref'")
                         break
-                if not ref_col: # toujours pas trouvé
-                    logging.error("Colonne référence non trouvée dans df_article_euros.")
+                if not ref_col:
+                    print("Colonne reference introuvable automatiquement. Verifie le fichier Article_€.xlsx")
 
             # 7) Convertir Prix_Unitaire en float (retirer '€', remplacer virgule par point)
             if 'Prix_Unitaire' in df_article_euros.columns:
@@ -512,68 +546,115 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 s = s.str.replace(' ', '', regex=False)
                 s = s.str.replace(',', '.', regex=False)
                 df_article_euros['Prix_Unitaire'] = pd.to_numeric(s, errors='coerce')
+                print("-> Conversion 'Prix_Unitaire' en numerique effectuee.")
             else:
-                logging.error("Colonne 'Prix_Unitaire' non trouvée dans df_article_euros.")
+                print("'Prix_Unitaire' absent, conversion ignoree.")
 
-        #--- ETAT STOCK ---
-        if 'Ref Metro' not in df_etat_stock.columns and 'SubSys' in df_etat_stock.columns:
+        print("Apercu df_article_euros (head):")
+        print(df_article_euros.head(5))
+
+        #------------------------------------------------        
+        #------- ETAT STOCK (Excel ou CSV “cassé”) ------
+        #------------------------------------------------
+        print("--- ETAT STOCK ---")
+        print("Colonnes initiales df_etat_stock :", df_etat_stock.columns.tolist())
+
+        if df_etat_stock.shape[1] == 1:  # Toutes les données sont dans une seule colonne
+            # Séparer les colonnes par virgule
+            df_etat_stock = df_etat_stock.iloc[:, 0].str.split(',', expand=True)
+            df_etat_stock.columns = ['MGB', 'Description', 'Ref Metro'] + [f'col{i}' for i in range(4, df_etat_stock.shape[1]+1)]
+            print("Colonnes apres split CSV mal forme :", df_etat_stock.columns.tolist())
+
+        elif 'Ref Metro' not in df_etat_stock.columns and 'SubSys' in df_etat_stock.columns:
             df_etat_stock = df_etat_stock.rename(columns={'SubSys': 'Ref Metro'})
-            df_etat_stock ['MGB'] = df_etat_stock ['MGB'].astype(str)
+            print("Colonnes apres renommage si necessaire :", df_etat_stock.columns.tolist())
+        
+        # S'assurer que MGB est string
+        df_etat_stock['MGB'] = df_etat_stock['MGB'].astype(str)
 
+        # Vérifier que les colonnes essentielles existent
+        essential_cols = ['MGB', 'Description', 'Ref Metro', 'Position', 'Quantity', 'Max Delivery Date']
+        missing_cols = [c for c in essential_cols if c not in df_etat_stock.columns]
+        if missing_cols:
+            raise ValueError(f"Colonnes manquantes dans l'état stock : {missing_cols}")
 
-            # Vérifier que les colonnes essentielles existent
-            essential_cols = ['MGB', 'Description', 'Ref Metro']
-            missing_cols = [c for c in essential_cols if c not in df_etat_stock.columns]
-            if missing_cols:
-                logging.error(f"Colonnes manquantes dans l'état stock : {missing_cols}")
-                raise ValueError(f"Colonnes manquantes dans l'état stock : {missing_cols}")
+        df_etat_stock = df_etat_stock[essential_cols].copy()
+        print("Colonnes apres selection essentielles :", df_etat_stock.columns.tolist())
 
-            df_etat_stock = df_etat_stock[essential_cols].copy()
+        # Nettoyage des caractères spéciaux dans Description
+        remplacement = {"ÃŽ": "î", "Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
+                        "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", " Ã ": " à ", "Ã": "û", "¤": "", "«": "", "»": "", "Â": ""}
+        df_etat_stock["Description"] = df_etat_stock["Description"].replace(remplacement, regex=True)
 
-            # Ne garder qu'une seule ligne par MGB
-            df_etat_stock = df_etat_stock.drop_duplicates(subset='MGB', keep='first')
+        # Ajouter la colonne EAN depuis le fichier Excel
+        df_excel_ean['MGB'] = df_excel_ean['MGB'].astype(str)
 
-            # --- Nettoyage des caractères spéciaux dans Description ---
-            remplacement = {"Å“": "œ", "Ã‚": "â", "Ã´": "ô", "Ã¨": "ë", "Ã¢": "â", "Ã§": "ç",
-                            "Ãª": "ê", "Ã®": "î", "Ã©": "é", "Â°": "°", "Ã": "à", "¤": "", "«": "", "»": "", "Â": ""}
-            df_etat_stock["Description"] = df_etat_stock["Description"].replace(remplacement, regex=True)
+        # Merge outer pour conserver tous les MGB
+        df_merged = df_etat_stock.merge(
+            df_excel_ean[['MGB', 'Description', 'Ref Metro', 'CODE EAN']],
+            on='MGB',
+            how='outer',
+            suffixes=('_stock', '_ean')
+        )
 
-            # --- Ajouter la colonne EAN depuis le fichier Excel ---
-            df_excel_ean['MGB'] = df_excel_ean['MGB'].astype(str)
+        # Pour Description et Ref Metro, garder celle de df_etat_stock si présente, sinon prendre df_excel_ean
+        for col in ['Description', 'Ref Metro']:
+            df_merged[col] = df_merged[f'{col}_stock'].combine_first(df_merged[f'{col}_ean'])
+            df_merged.drop([f'{col}_stock', f'{col}_ean'], axis=1, inplace=True)
 
-            # Merge outer pour conserver tous les MGB
-            df_merged = df_etat_stock.merge(
-                df_excel_ean[['MGB', 'Description', 'Ref Metro', 'CODE EAN']],
-                on='MGB',
-                how='outer',
-                suffixes=('_stock', '_ean')
-            )
+        # Renommer CODE EAN → EAN
+        df_merged.rename(columns={'CODE EAN': 'EAN'}, inplace=True)
 
-            # Pour Description et Ref Metro, garder celle de df_etat_stock si présente, sinon prendre df_excel_ean
-            for col in ['Description', 'Ref Metro']:
-                df_merged[col] = df_merged[f'{col}_stock'].combine_first(df_merged[f'{col}_ean'])
-                df_merged.drop([f'{col}_stock', f'{col}_ean'], axis=1, inplace=True)
+        # Convertir les EAN float en str sans décimales
+        df_merged['EAN'] = df_merged['EAN'].apply(
+            lambda x: str(int(x)) if pd.notna(x) and isinstance(x, (float, np.floating)) else (str(x) if pd.notna(x) else '')
+        )
+        # S'assurer que Ref Metro est string et supprimer .0 si présent
+        df_merged['Ref Metro'] = df_merged['Ref Metro'].apply(
+            lambda x: str(int(x)) if pd.notna(x) and isinstance(x, (float, np.floating)) else (str(x) if pd.notna(x) else '')
+        )
+    
+        # ordre des colonnes
+        df_merged.rename(columns={'Description': 'Désignation'}, inplace=True)
+        df_merged.rename(columns={'Max Delivery Date': 'DLC'}, inplace=True)
+        df_merged.rename(columns={'Quantity': 'Qty_Stock'}, inplace=True)
 
-            # Renommer CODE EAN → EAN
-            df_merged.rename(columns={'CODE EAN': 'EAN'}, inplace=True)
+        #ajout colonne de Base_Article
+        df_merged['MGB'] = df_merged['MGB'].astype(str).str.strip()
+        Base_Article['MGB'] = (Base_Article['MGB 12'].apply(lambda x: f"{int(x):d}" if pd.notna(x) else None)).astype(str).str.strip()
+        print("df_merged MGB (exemples):", df_merged['MGB'].dropna().unique()[:10])
+        print("Base_Article MGB (exemples):", Base_Article['MGB 12'].dropna().unique()[:10])
+        # Merge pour récupérer SA, GA, Flux
+        df_merged = df_merged.merge(
+            Base_Article[['MGB', 'SA', 'GA', 'Flux ']],
+            on='MGB',
+            how='left'
+        )
+        # Merge pour recuperer les prix
+        df_merged = df_merged.merge(
+            df_article_euros[['ref', 'Prix_Unitaire']],
+            left_on='Ref Metro',
+            right_on='ref',
+            how='left'
+        )
+        df_merged.drop(columns=['ref'], inplace=True)
 
-            # Convertir les EAN float en str sans décimales
-            df_merged['EAN'] = df_merged['EAN'].apply(
-                lambda x: str(int(x)) if pd.notna(x) and isinstance(x, (float, np.floating)) else (str(x) if pd.notna(x) else '')
-            )
+        # Renommer Flux → Cellule et Prix_Unitaire → Prix et remplacer 'Alcool' par 'Ambiant'
+        df_merged.rename(columns={'Flux ': 'Cellule'}, inplace=True)
+        df_merged.rename(columns={'Prix_Unitaire': 'Prix'}, inplace=True)
+        df_merged['Cellule'] = df_merged['Cellule'].replace('Alcool', 'Ambiant')
 
-            # Gérer les doublons : priorité aux lignes avec EAN rempli
-            df_merged.sort_values(by='EAN', key=lambda x: x.notna(), ascending=False, inplace=True)
-            df_merged = df_merged.drop_duplicates(subset='MGB', keep='first')
+        # Résultat final
+        df_etat_stock = df_merged
 
-            # Résultat final
-            df_etat_stock = df_merged
-
+        print("Apercu df_etat_stock (head):")
+        print(df_etat_stock.head(5))
 
         # ==================================================
         # AJOUT PRIX + AU_KG + VALEUR DIFFÉRENCE
         # ==================================================
         # Ajouter prix et valeur totale
+        print("--- AJOUT PRIX + VALEUR DIFFÉRENCE ---")
         def add_price_and_value(df_target, df_price, target_key, price_key, quantity_col, value_col='Valeur_du_Stock', price_col='Prix_Unitaire', display_in_streamlit=True):
             if df_target.empty or df_price.empty:
                 df_target[value_col] = 0
@@ -589,77 +670,118 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                 how='left'
             )
             df_target = df_target.drop(columns=[price_key])
+            
+            # Assurer que les colonnes sont numériques
+            print("Valeurs uniques dans", quantity_col, ":", df_target[quantity_col].unique()[:10])
+            print("Valeurs uniques dans", price_col, ":", df_target[price_col].unique()[:10])
+
+            df_target[quantity_col] = pd.to_numeric(df_target[quantity_col], errors='coerce').fillna(0)
+            df_target[price_col] = pd.to_numeric(df_target[price_col], errors='coerce').fillna(0).round(2)
+
             df_target[value_col] = df_target[quantity_col] * df_target[price_col]
 
             if display_in_streamlit:
                 st.dataframe(df_target.style.format({price_col: "{:.2f}", value_col: "{:.2f}"}))
 
             return df_target
-        def remove_duplicate_columns(df):
-            """
-            Supprime les colonnes dupliquées dans un DataFrame en gardant la première occurrence.
-            """
-            if df is None or df.empty:
-                return df
-            df = df.loc[:, ~df.columns.duplicated()]
-            return df
-
-        # --- Valeur Difference ---
-        df_inventaire = add_price_and_value(df_inventaire, df_article_euros, 'Ref_MERTO', 'ref', 'Inventaire_Final_Quantity', display_in_streamlit=False)
-        df_reception = add_price_and_value(df_reception, df_article_euros, 'Ref_MERTO', 'ref', 'Qty_Reception', display_in_streamlit=False)
-        df_sorties = add_price_and_value(df_sorties, df_article_euros, 'Ref_MERTO', 'ref', 'Qty/Article/Poids', display_in_streamlit=False)
-        df_mvt_stock = add_price_and_value(df_mvt_stock, df_article_euros, 'Ref_MERTO', 'ref', 'Qty_Mouvement', display_in_streamlit=False)
         
-        mapping_inventaire = df_inventaire[['MGB_6', 'Prix_Unitaire']].drop_duplicates()
-        mapping_reception = df_reception[['MGB_6', 'Prix_Unitaire']].drop_duplicates()
-        mapping_mvt = df_mvt_stock[['MGB_6', 'Prix_Unitaire']].drop_duplicates()
-        mapping_global = pd.concat([mapping_inventaire, mapping_reception, mapping_mvt]).drop_duplicates(subset='MGB_6', keep='first')
+        # --- Valeur Difference ---
+        df_inventaire = add_price_and_value(df_inventaire, df_article_euros, 'Ref_Metro', 'ref', 'Inventaire_Final_Quantity', display_in_streamlit=False)
+        df_reception = add_price_and_value(df_reception, df_article_euros, 'Ref_Metro', 'ref', 'Qty_Reception', display_in_streamlit=False)
+        df_sorties = add_price_and_value(df_sorties, df_article_euros, 'Ref_Metro', 'ref', 'Qty/Article/Poids', display_in_streamlit=False)
+        df_mvt_stock = add_price_and_value(df_mvt_stock, df_article_euros, 'Ref_Metro', 'ref', 'Qty_Mouvement', display_in_streamlit=False)
+        df_etat_stock = add_price_and_value(df_etat_stock, df_article_euros, 'Ref Metro', 'ref', 'Qty_Stock', display_in_streamlit=False)
 
-        # fusionner pour ajouter Prix_Unitaire à df_ecart_stock_last**
+        def safe_mapping(df):
+            for col in ['MGB_6', 'Prix_Unitaire']:
+                if col not in df.columns:
+                    df[col] = pd.NA
+            return df[['MGB_6', 'Prix_Unitaire']].drop_duplicates()
+
+        mapping_inventaire = safe_mapping(df_inventaire)
+        mapping_reception  = safe_mapping(df_reception)
+        mapping_mvt        = safe_mapping(df_mvt_stock)
+
+        dfs = [mapping_inventaire, mapping_reception, mapping_mvt]
+        dfs = [df for df in dfs if not df.empty]
+
+        mapping_global = (
+            pd.concat(dfs)
+            .drop_duplicates(subset="MGB_6", keep="first")
+        )
+
+        # Fusionner Prix_Unitaire dans df_ecart_stock_last
         df_ecart_stock_last = df_ecart_stock_last.merge(mapping_global, on='MGB_6', how='left')
 
-        df_ecart_stock_last['Valeur_Difference'] = df_ecart_stock_last['Prix_Unitaire'] * df_ecart_stock_last['Difference_MMS-WMS']
-        df_ecart_stock_last['Valeur_Difference'] = pd.to_numeric(df_ecart_stock_last['Valeur_Difference'], errors='coerce').round(2)
+        # Forcer arrondi à 2 chiffres pour Prix_Unitaire
+        df_ecart_stock_last['Prix_Unitaire'] = (
+            pd.to_numeric(df_ecart_stock_last['Prix_Unitaire'], errors='coerce')
+            .fillna(0)
+            .round(2)
+        )
+
+        # Calcul de la Valeur_Difference
+        df_ecart_stock_last['Valeur_Difference'] = (
+            df_ecart_stock_last['Prix_Unitaire'] * df_ecart_stock_last['Difference_MMS-WMS']
+        ).round(2)
+
 
         # --- Valeur AU_KG ---
+        print("--- AJOUT AU_KG ---")
 
+        # Créer un mapping global
         mapping_aukg_reception = df_reception[['MGB_6', 'Au_Kg']].drop_duplicates()
-        mapping_aukg_mvt = df_mvt_stock[['MGB_6', 'Au_Kg']].drop_duplicates()
-        mapping_aukg_sorties = df_sorties[['MGB_6', 'Au_Kg']].drop_duplicates()
-        mapping_aukg_global = pd.concat([mapping_aukg_reception, mapping_aukg_mvt, mapping_aukg_sorties]).drop_duplicates(subset='MGB_6', keep='first')
+        mapping_aukg_mvt       = df_mvt_stock[['MGB_6', 'Au_Kg']].drop_duplicates()
+        mapping_aukg_sorties   = df_sorties[['MGB_6', 'Au_Kg']].drop_duplicates()
 
+        mapping_aukg_global = pd.concat([
+            mapping_aukg_reception,
+            mapping_aukg_mvt,
+            mapping_aukg_sorties
+        ]).drop_duplicates(subset='MGB_6', keep='first')
+
+        # Merge sans convertir en bool
         df_ecart_stock_last = df_ecart_stock_last.merge(mapping_aukg_global, on='MGB_6', how='left')
 
         # --- Réordonner colonnes finales ---
-        nouvel_ordre = ["MGB_6", "Désignation", "MMS_Stock", "WMS_Stock", "Difference_MMS-WMS", 
-                        'Au_Kg', "Deja_Present", 'Prix_Unitaire', 'Valeur_Difference', 
-                        "Date_Dernier_Commentaire", "Commentaire"]
-        
-        df_ecart_stock_last = df_ecart_stock_last[[col for col in nouvel_ordre if col in df_ecart_stock_last.columns]]
-        
-        # --- Supprimer les colonnes dupliquées après preprocess ---
-        df_mvt_stock = remove_duplicate_columns(df_mvt_stock)
-        df_reception = remove_duplicate_columns(df_reception)
-        df_sorties = remove_duplicate_columns(df_sorties)
-        df_inventaire = remove_duplicate_columns(df_inventaire)
-        df_ecart_stock_last = remove_duplicate_columns(df_ecart_stock_last)
-        df_ecart_stock_prev = remove_duplicate_columns(df_ecart_stock_prev)
-        df_article_euros = remove_duplicate_columns(df_article_euros)
+        nouvel_ordre = [
+            "MGB_6", "Désignation", "MMS_Stock : Metro", "WMS_Stock : IDL",
+            "Difference_MMS-WMS", 'Au_Kg', "Deja_Present", 'Prix_Unitaire',
+            'Valeur_Difference', "Date_Dernier_Commentaire", "Commentaire"
+        ]
 
+        df_ecart_stock_last = df_ecart_stock_last[[col for col in nouvel_ordre if col in df_ecart_stock_last.columns]] 
+        # Vérifier le type
+        print(df_ecart_stock_last['Au_Kg'].dtype)
+        print(df_ecart_stock_last['Au_Kg'].unique())    
+        # Normaliser les valeurs en booléens
+        df_ecart_stock_last['Au_Kg'] = df_ecart_stock_last['Au_Kg'].apply(
+            lambda x: True if x in [True, 'true', 1] else (False if x in [False, 'false', 0] else pd.NA)
+        ).astype('boolean')  # dtype nullable bool
+        print(df_ecart_stock_last['Au_Kg'].dtype)
         # ============================================================
         # Préserver les anciens commentaires avant d'écraser le parquet
         # ============================================================
-        
-        local_parquet = us.LOCAL_CACHE_DIR / "ecart_stock_last.parquet"
+        print("--- RESTAURATION ANCIENS COMMENTAIRES ET CHOIX TRAITEMENT ---")
+        parquet_path = Path(r"\\spwfs-metbre\Partage\11_Public\Data_app\Cache\ecart_stock_last.parquet")
 
-        if local_parquet.exists():
+        if parquet_path.exists():
             try:
-                df_old = pd.read_parquet(local_parquet)
+                df_old = pd.read_parquet(parquet_path)
+                print("df_ecart_stock_last avant merge:", df_ecart_stock_last.head(3))
+                print("df_old:", df_old.head(3))
+                print("Colonnes df_ecart_stock_last:", df_ecart_stock_last.columns.tolist())
+                print("Colonnes df_old:", df_old.columns.tolist())
+                print(df_ecart_stock_last.dtypes)
+                print(df_old.dtypes)
 
                 expected = {"MGB_6", "Commentaire", "Date_Dernier_Commentaire", "Choix_traitement"}
                 if expected.issubset(set(df_old.columns)):
+                    print("Fusion des anciens commentaires et choix traitement avec les nouvelles données...")
+
                     # --- s'assurer qu'il n'y a pas de doublons côté ancien fichier (garder le dernier) ---
                     if df_old["MGB_6"].duplicated().any():
+                        print(f"Attention : {df_old['MGB_6'].duplicated().sum()} doublons trouvés dans df_old -> on garde la dernière occurrence.")
                         df_old = df_old.sort_values("Date_Dernier_Commentaire", ascending=True).drop_duplicates(subset="MGB_6", keep="last")
 
                     # --- fusionner (suffixe _old) ---
@@ -681,41 +803,59 @@ def preprocess_data(df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_s
                             mask_missing = df_ecart_stock_last[col].isnull() | (df_ecart_stock_last[col].astype(str).str.strip() == "")
                             n_to_fill = mask_missing.sum()
                             if n_to_fill:
+                                print(f"Remplissage {n_to_fill} valeurs manquantes dans '{col}' depuis '{old_col}'.")
                                 df_ecart_stock_last.loc[mask_missing, col] = df_ecart_stock_last.loc[mask_missing, old_col]
                         else:
-                            logging.info(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
+                            print(f"Colonne {old_col} non trouvée après merge (rien à fusionner pour {col}).")
 
                     # --- supprimer toutes les colonnes finissant par _old (robuste) ---
                     old_cols = [c for c in df_ecart_stock_last.columns if isinstance(c, str) and c.endswith("_old")]
                     if old_cols:
-                        logging.info(f"Suppression des colonnes temporaires : {old_cols}")
+                        print(f"Suppression des colonnes temporaires : {old_cols}")
                         df_ecart_stock_last.drop(columns=old_cols, inplace=True, errors="ignore")
                     else:
-                        logging.error("Aucune colonne *_old à supprimer.")
+                        print("Aucune colonne *_old à supprimer.")
 
                 else:
-                    logging.error(f"Le parquet existant ne contient pas toutes les colonnes attendues : {expected & set(df_old.columns)}")
+                    print("Le parquet existant ne contient pas toutes les colonnes attendues :", expected & set(df_old.columns))
 
             except Exception as e:
-                logging.error(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
+                print(f"Impossible de restaurer les anciens commentaires ou choix traitement : {e}")
         else:
-            logging.info("Aucun ancien parquet trouvé, création initiale du fichier.")
+            print("Aucun ancien parquet trouvé sur OneDrive, création initiale du fichier.")
 
-        def remove_full_duplicate_rows(df):
+        # --- Supprimer les colonnes dupliquées après preprocess ---
+        print("--- SUPPRESSION COLONNES DUPLIQUÉES APRÈS PREPROCESS ---")
+        def remove_duplicate_columns(df):
             """
-            Supprime les lignes entièrement dupliquées dans un DataFrame.
-            Garde la première occurrence.
+            Supprime les colonnes dupliquées dans un DataFrame en gardant la première occurrence.
             """
             if df is None or df.empty:
                 return df
-            return df.drop_duplicates(keep='first')
-    
-        df_ecart_stock_prev = remove_full_duplicate_rows(df_ecart_stock_prev)
-        df_ecart_stock_last = remove_full_duplicate_rows(df_ecart_stock_last)
-        df_reception = remove_full_duplicate_rows(df_reception)
-        df_sorties = remove_full_duplicate_rows(df_sorties)
-        df_inventaire = remove_full_duplicate_rows(df_inventaire)
-        df_mvt_stock = remove_full_duplicate_rows(df_mvt_stock)
-        df_article_euros = remove_full_duplicate_rows(df_article_euros)
+            df = df.loc[:, ~df.columns.duplicated()]
+            return df
         
-        return df_ecart_stock_prev, df_ecart_stock_last, df_reception, df_sorties, df_inventaire, df_article_euros, df_mvt_stock, df_etat_stock, df_excel_ean,
+        df_mvt_stock = remove_duplicate_columns(df_mvt_stock)
+        df_reception = remove_duplicate_columns(df_reception)
+        df_sorties = remove_duplicate_columns(df_sorties)
+        df_inventaire = remove_duplicate_columns(df_inventaire)
+        df_ecart_stock_last = remove_duplicate_columns(df_ecart_stock_last)
+        df_ecart_stock_prev = remove_duplicate_columns(df_ecart_stock_prev)
+        df_article_euros = remove_duplicate_columns(df_article_euros)
+
+        # --- Supprimer les lignes dupliquées après preprocess ---
+        print("--- SUPPRESSION LIGNES DUPLIQUÉES APRÈS PREPROCESS ---")
+        df_reception = df_reception.drop_duplicates().reset_index(drop=True)
+        df_sorties = df_sorties.drop_duplicates().reset_index(drop=True)    
+        df_mvt_stock = df_mvt_stock.drop_duplicates().reset_index(drop=True)
+        
+        print("\n=== SYNTHÈSE APRÈS PREPROCESS ===")
+        print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")    
+        print(f"Réception : {len(df_reception)} lignes")
+        print(f"Sorties   : {len(df_sorties)} lignes")
+        print(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
+        print(f"Ecart_Stock : {len(df_ecart_stock_prev)} lignes")
+        print(f"Article_euros : {len(df_article_euros)} lignes")    
+        print(f"Inventaire : {len(df_inventaire)} lignes")
+        
+        return df_mvt_stock, df_reception, df_sorties, df_inventaire, df_ecart_stock_prev, df_ecart_stock_last, df_article_euros, df_etat_stock, df_excel_ean, date_ref, Base_Article

@@ -2,38 +2,12 @@
 import sys
 from pathlib import Path
 import pandas as pd
-from datetime import datetime
-import subprocess
-import os
-import shutil
-import streamlit as st
-import requests
-import base64
-import logging
-
-# Import local
 sys.path.append(str(Path(__file__).resolve().parent))
 from preprocess_stock import load_data, preprocess_data
-import utils_stock as us
 
-# Chemin absolu basé sur le script
-SCRIPT_DIR = Path(__file__).parent.resolve()
-LOG_FILE = SCRIPT_DIR / "prepare_data.log"
-
-logging.basicConfig(
-    filename=LOG_FILE,
-    filemode="a",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# =====================================================
-# Pipeline complet : GitHub → Preprocess → Parquet → GitHub
-# =====================================================
 def prepare_stock_data():
-    logging.info("\n=== SCRIPT prepare_stock_data ===")
+    print("\n=== DÉMARRAGE DU SCRIPT prepare_stock_data ===")
 
-    # 1) Chargement depuis GitHub
     (
         df_mvt_stock,
         df_reception,
@@ -45,72 +19,43 @@ def prepare_stock_data():
         df_etat_stock,
         df_excel_ean,
         file_last,
-    ) = load_data()        # 100% GitHub
+        date_ref,
+        Base_Article,
+    ) = load_data()
 
-    # 2) Prétraitement
     (
-        df_ecart_stock_prev,
-        df_ecart_stock_last,
+        df_mvt_stock,
         df_reception,
         df_sorties,
         df_inventaire,
+        df_ecart_stock_prev,
+        df_ecart_stock_last,
         df_article_euros,
-        df_mvt_stock,
-        df_etat_stock, 
+        df_etat_stock,
         df_excel_ean,
+        date_ref,
+        Base_Article,
     ) = preprocess_data(
-        df_ecart_stock_prev,
-        df_ecart_stock_last,
+        df_mvt_stock,
         df_reception,
         df_sorties,
         df_inventaire,
+        df_ecart_stock_prev,
+        df_ecart_stock_last,
         df_article_euros,
-        df_mvt_stock,
-        df_etat_stock, 
+        df_etat_stock,
         df_excel_ean,
+        date_ref,
+        Base_Article,
     )
 
-    # 3) Sauvegarde Parquet dans GitHub local
-    # --- Répertoire temporaire pour les fichiers parquet ---
-    LOCAL_TEMP_DIR = Path(__file__).parent / "temp_cache"
-    LOCAL_TEMP_DIR.mkdir(parents=True, exist_ok=True)
-    
+    # === Dossier Cache Streamlit ===
+    # crée un sous-dossier .streamlit/Cache dans le projet
+    output_dir = Path(__file__).resolve().parent / ".streamlit" / "Cache"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Dossier de sortie : {output_dir}")
 
-
-    #-------test----------
-
-    # --- Fonction pour push un fichier sur GitHub ---
-    def push_file_to_github(file_path: Path, filename: str):
-        """Push un fichier directement dans le dossier Cache du repo GitHub."""
-        url = f"{us.GITHUB_API_BASE}/{filename}"
-        try:
-            with open(file_path, "rb") as f:
-                content = f.read()
-            b64_content = base64.b64encode(content).decode()
-
-            # Vérifie si le fichier existe pour récupérer le SHA
-            r = requests.get(url, headers=us.HEADERS)
-            if r.status_code == 200:
-                sha = r.json().get("sha")
-                logging.info(f"{filename} existe déjà sur GitHub, SHA récupéré.")
-            else:
-                sha = None
-                logging.info(f"{filename} n'existe pas encore sur GitHub, création d'un nouveau fichier.")
-
-            data = {"message": f"Update {filename}", "content": b64_content, "branch": "main"}
-            if sha:
-                data["sha"] = sha
-
-            r_put = requests.put(url, headers=us.HEADERS, json=data)
-
-            if r_put.status_code in [200, 201]:
-                logging.info(f"[OK] {filename} pushé sur GitHub")
-            else:
-                logging.error(f"[ERREUR] {filename} non pushé : {r_put.status_code} - {r_put.text}")
-        except Exception as e:
-            logging.exception(f"[EXCEPTION] Erreur lors du push de {filename} : {e}")
-
-    # --- DataFrames à push ---
+    # === Dictionnaire des DataFrames à sauvegarder ===
     datasets = {
         "mvt_stock": df_mvt_stock,
         "reception": df_reception,
@@ -120,30 +65,33 @@ def prepare_stock_data():
         "ecart_stock_prev": df_ecart_stock_prev,
         "article_euros": df_article_euros,
         "etat_stock": df_etat_stock,
+        "base_article": Base_Article,
     }
 
-    # --- Push des fichiers parquet ---
+    # === Sauvegarde en parquet ===
     for name, df in datasets.items():
-        temp_file = LOCAL_TEMP_DIR / f"{name}.parquet"
-        logging.info(f"Création du fichier temporaire : {temp_file}")
-        df.to_parquet(temp_file, index=False)
-        push_file_to_github(temp_file, f"{name}.parquet")
+        print(f"{name}: {len(df)} lignes, empty={df.empty}")
+        file_path = output_dir / f"{name}.parquet"
+        if not df.empty:
+            # Supprimer le Parquet existant pour forcer la mise à jour
+            if file_path.exists():
+                file_path.unlink()
+            df.to_parquet(file_path, index=False)
+            print(f"Fichier sauvegardé : {file_path} ({len(df)} lignes)")
+        else:
+            print(f"{name} est vide — non sauvegardé")
 
-    # --- Mettre à jour file_last.txt sur GitHub ---
-    file_last_path = LOCAL_TEMP_DIR / "file_last.txt"
-    file_last_path.write_text("ecart_stock_last.parquet", encoding="utf-8")
-    logging.info(f"Fichier temporaire créé : {temp_file}")
-    push_file_to_github(file_last_path, "file_last.txt")
+    # === Sauvegarde du chemin du dernier fichier Parquet ===
+    file_last_path = output_dir / "file_last.txt"
+    file_last_parquet = output_dir / "ecart_stock_last.parquet"
 
-    # --- Nettoyage du répertoire temporaire ---
-    shutil.rmtree(LOCAL_TEMP_DIR)
+    with open(file_last_path, "w", encoding="utf-8") as f:
+        f.write(str(file_last_parquet).replace("\\", "/"))
 
-    logging.info("Tous les DataFrames ont été pushés sur GitHub avec file_last.txt mis à jour.")
+    print("\n=== SYNTHÈSE DU TRAITEMENT ===")
+    print(f"Fichiers Parquet créés dans : {output_dir}")
+    print(f"Chemin du dernier Parquet enregistré dans : {file_last_path}")
+    print("\nPreparation terminée avec succès.")
 
-    logging.info("\n=== FIN DU TRAITEMENT ===\n")
-
-# =====================================================
-# Exécution principale
-# =====================================================
 if __name__ == "__main__":
     prepare_stock_data()
