@@ -10,73 +10,166 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime
 from openpyxl import load_workbook
+import glob
+import os
 
-# -------------------------------
-# Fonctions utilitaires pour GitHub
-# -------------------------------
-GITHUB_BASE = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main"
-
-def read_excel_from_github(file_path: str, sheet_name=0):
-    url = f"{GITHUB_BASE}/{file_path}"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return pd.read_excel(io.BytesIO(resp.content), sheet_name=sheet_name, engine="openpyxl")
-
-def read_csv_from_github(file_path: str, **kwargs):
-    url = f"{GITHUB_BASE}/{file_path}"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return pd.read_csv(io.StringIO(resp.text), **kwargs)
-
-# -------------------------------
-# Load data
-# -------------------------------
 def load_data():
     """
-    Charge toutes les données depuis GitHub.
+    Charge tous les fichiers Excel récents depuis un dossier GitHub.
+    Ne garde que ceux plus récents que la date de référence.
     """
-    print("=== CHARGEMENT DES DONNEES DEPUIS GITHUB ===")
 
-    # ----- Fichiers principaux -----
-    Base_Article = read_excel_from_github("Base_Article/Base Article V2.xlsx")
-    df_article_euros = read_excel_from_github("Base_Article/Article €.xlsx")
-    df_inventaire = read_excel_from_github("Inventory_21_09_2025.xlsx")
+    # === Dossiers ===
+    partage_base = "https://raw.githubusercontent.com/IDLAurelienMartin/Data_IDL/main"
+    dossier_mvt_stock = partage_base / "Mvt_stock"
+    dossier_reception = partage_base / "Historique_Reception"
+    dossier_sorties = partage_base / "Historique_des_Sorties"
+    dossier_ecart_stock = partage_base / "Ecart_Stock"
+    dossier_etat_stock = partage_base / "Etat_Stock"
+    Base_Article = partage_base / r"Base_Article\Base Article V2.xlsx"
+    file_article = partage_base / r"Base_Article\Article €.xlsx"
+    file_inventaire = partage_base / r"Inventory_21_09_2025.xlsx"
+    cache_dir = Path("./Cache")
+    file_excel_ean = partage_base / r"\Detrompeur\Liste detrompeur + EAN.xlsx"
 
-    # ----- Etat stock -----
-    # Si CSV mal formé
-    try:
-        df_etat_stock = read_csv_from_github("Etat_Stock/etat_stock_latest.csv", sep=None, engine="python", encoding="latin-1", on_bad_lines="skip")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Fichier état stock le plus récent (CSV ou Excel) ---
+    fichiers = (
+        list(dossier_etat_stock.glob("*.csv")) +
+        list(dossier_etat_stock.glob("*.xlsx")) +
+        list(dossier_etat_stock.glob("*.xls"))
+    )
+
+    if not fichiers:
+        raise FileNotFoundError(
+            "Aucun fichier CSV ou Excel trouve dans le dossier Etat_Stock"
+        )
+
+    # Dernier fichier modifié
+    file_etat_stock = max(fichiers, key=lambda f: f.stat().st_mtime)
+    print("Fichier Etat Stock utilise :", file_etat_stock)
+
+    # file_etat_stock = dernier fichier sélectionné (CSV ou Excel)
+
+    if file_etat_stock.suffix.lower() == ".csv":
+        df_etat_stock = pd.read_csv(
+            file_etat_stock,
+            sep=None,          # auto-détection séparateur
+            engine="python",
+            encoding="latin-1",
+            encoding_errors="ignore",
+            on_bad_lines="skip"
+        )
+        # Si tout est dans une seule colonne, on peut splitter :
         if df_etat_stock.shape[1] == 1:
             df_etat_stock = df_etat_stock.iloc[:, 0].str.split(",", expand=True)
-    except Exception:
-        # fallback Excel
-        df_etat_stock = read_excel_from_github("Etat_Stock/etat_stock_latest.xlsx")
+    else:
+        # Excel
+        df_etat_stock = pd.read_excel(
+            file_etat_stock,
+            sheet_name=0,
+            engine='openpyxl'
+        )
 
-    # ----- Ecart stock -----
-    df_ecart_stock_prev = read_excel_from_github("Ecart_Stock/ecart_stock_prev.xlsx")
-    df_ecart_stock_last = read_excel_from_github("Ecart_Stock/ecart_stock_last.xlsx")
+    # === Date de référence ===
+    def get_excel_creation_date(file_path: Path) -> datetime:
+        """Récupère la date de création interne d'un fichier Excel (.xlsx)."""
+        wb = load_workbook(file_path, read_only=True)
+        props = wb.properties
+        wb.close()
+        if props.created:
+            return props.created
+        raise ValueError("Date de creation non trouvee dans les metadonnees Excel")
 
-    # ----- Mouvements, Réception, Sorties -----
-    df_mvt_stock = read_excel_from_github("Mvt_stock/mvt_stock_latest.xlsx")
-    df_reception = read_excel_from_github("Historique_Reception/reception_latest.xlsx")
-    df_sorties = read_excel_from_github("Historique_des_Sorties/sorties_latest.xlsx")
+    # Date inventaire (Excel obligatoire)
+    if not file_inventaire.exists():
+        raise FileNotFoundError(f"Fichier inventaire manquant : {file_inventaire}")
 
-    # ----- Liste EAN -----
-    df_excel_ean = read_excel_from_github("Detrompeur/Liste detrompeur + EAN.xlsx")
+    try:
+        date_ref = get_excel_creation_date(file_inventaire)
+        print(f"Date de creation reelle du contenu : {date_ref.strftime('%d/%m/%Y')}")
+    except Exception as e:
+        print(f"Fallback date systeme inventaire : {e}")
+        date_ref = datetime.fromtimestamp(file_inventaire.stat().st_ctime)
 
-    # ----- Date de référence depuis inventaire -----
-    def get_excel_creation_date_from_bytes(file_bytes: bytes):
-        with io.BytesIO(file_bytes) as f:
-            wb = load_workbook(f, read_only=True)
-            props = wb.properties
-            wb.close()
-            if props.created:
-                return props.created
-            return datetime.now()
+    # === Fonction récursive de concaténation ===
+    def concat_excel_from_folder(folder: Path, date_ref: datetime) -> pd.DataFrame:
+        """
+        Charge tous les fichiers Excel récents depuis un dossier et ses sous-dossiers.
+        Ne garde que ceux plus récents que la date de référence.
+        Affiche les fichiers problématiques et la raison de l'échec.
+        """
+        if not folder.exists():
+            print(f"Dossier introuvable : {folder}")
+            return pd.DataFrame()
 
-    date_ref = get_excel_creation_date_from_bytes(requests.get(f"{GITHUB_BASE}/Inventory_21_09_2025.xlsx").content)
-    print(f"Date de référence inventaire : {date_ref.strftime('%d/%m/%Y')}")
+        fichiers = [
+            Path(f) for f in glob.glob(str(folder / "**" / "*.xlsx"), recursive=True)
+            if Path(f).stat().st_mtime > date_ref.timestamp()
+        ]
 
+        print(f"{len(fichiers)} fichier(s) recents trouves (y compris sous-dossiers) dans {folder}")
+
+        if not fichiers:
+            return pd.DataFrame()
+
+        dfs = []
+        for f in fichiers:
+            try:
+                df = pd.read_excel(f, dtype=str, sheet_name=0, engine='openpyxl')
+                dfs.append(df)
+            except Exception as e:
+                msg = str(e).encode("utf-8", errors="replace").decode("utf-8")
+                print(f"Impossible de lire le fichier {f}: {type(e).__name__} - {msg}")
+
+        if not dfs:
+            print("Aucun fichier valide n'a pu etre charge.")
+            return pd.DataFrame()
+
+        return pd.concat(dfs, ignore_index=True)
+
+    # === Chargement des datasets ===
+    df_mvt_stock = concat_excel_from_folder(dossier_mvt_stock, date_ref)
+    df_reception = concat_excel_from_folder(dossier_reception, date_ref)
+    df_sorties = concat_excel_from_folder(dossier_sorties, date_ref)
+
+    # === Cas spécial : ECART STOCK ===
+    files = sorted(dossier_ecart_stock.glob("*.xlsx"), key=os.path.getmtime)
+    if len(files) < 2:
+        raise FileNotFoundError(f"Pas assez de fichiers dans {dossier_ecart_stock} pour comparaison.")
+    file_prev, file_last = files[-2], files[-1]
+
+    df_ecart_stock_prev = pd.read_excel(file_prev)
+    df_ecart_stock_last = pd.read_excel(file_last)
+    Base_Article = pd.read_excel(Base_Article)
+    
+    # --- Lire le fichier Excel des EAN ---
+    df_excel_ean = pd.read_excel(file_excel_ean, sheet_name=0, engine='openpyxl')
+
+    # === Fichiers de référence ===
+    df_article_euros = pd.read_excel(file_article) if file_article.exists() else pd.DataFrame()
+    df_inventaire = pd.read_excel(file_inventaire)
+
+    # === Gestion du cache ===
+    file_last_parquet = cache_dir / "ecart_stock_last.parquet"
+    file_last_txt = cache_dir / "file_last.txt"
+
+    with open(file_last_txt, "w", encoding="utf-8") as f:
+        f.write(str(file_last_parquet).replace("\\", "/"))
+
+    print("\n=== SYNTHÈSE DU CHARGEMENT ===")
+    print(f"Mvt_Stock : {len(df_mvt_stock)} lignes")
+    print(f"Réception : {len(df_reception)} lignes")
+    print(f"Sorties   : {len(df_sorties)} lignes")
+    print(f"Ecart_Stock : {len(df_ecart_stock_last)} lignes")
+    print(f"Article_euros : {len(df_article_euros)} lignes")
+    print(f"Inventaire : {len(df_inventaire)} lignes")
+    print("=== df_etat_stock avant preprocess ===")
+    print(type(df_etat_stock))
+    print(df_etat_stock.info())
+    print(df_etat_stock.head())  
+    
     return (
         df_mvt_stock,
         df_reception,
@@ -87,8 +180,9 @@ def load_data():
         df_article_euros,
         df_etat_stock,
         df_excel_ean,
+        file_last,
         date_ref,
-        Base_Article
+        Base_Article,
     )
 
 # -------------------------------
